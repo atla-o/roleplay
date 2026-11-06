@@ -1,6 +1,8 @@
 node_modules/
 dist/
 tools/bake/cache/
+**/__pycache__/
+*.pyc
 tools/bake/.venv/
 playwright-report/
 test-results/

@@ -1,0 +1,5 @@
+numpy>=2.1
+rasterio>=1.4
+pyproj>=3.7
+shapely>=2.0
+pyshp>=2.3

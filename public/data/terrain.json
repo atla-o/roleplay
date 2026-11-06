@@ -1,0 +1,118 @@
+{
+  "frame": "Northern Canada (Polar Desert Basin, 4 \u00d7 4 km)",
+  "crs": "EPSG:3413",
+  "bounds_3413": {
+    "xmin": -1116740.0,
+    "ymin": -1136011.0,
+    "xmax": -1112740.0,
+    "ymax": -1132011.0
+  },
+  "center_wgs84": {
+    "lat": 75.397104,
+    "lon": -89.509007
+  },
+  "width_m": 4000.0,
+  "height_m": 4000.0,
+  "cols": 500,
+  "rows": 500,
+  "spacing_m": 8.016032064128256,
+  "row_order": "north_to_south",
+  "origin": "southwest",
+  "world": {
+    "x": "metres east of xmin",
+    "z": "metres north of ymin",
+    "y": "elevation metres"
+  },
+  "elevation_m": {
+    "min": 66.67985534667969,
+    "max": 279.7215881347656,
+    "encoding": "uint16 linear"
+  },
+  "slope_deg": {
+    "min": 0,
+    "max": 90,
+    "encoding": "uint16 linear"
+  },
+  "depression_mm": {
+    "min": 0,
+    "max": 779.1595458984375,
+    "encoding": "uint16 linear"
+  },
+  "flow_log2": {
+    "min": 0,
+    "max": 14.441258331406123,
+    "encoding": "uint16 linear"
+  },
+  "georef": {
+    "cols": 5,
+    "rows": 5,
+    "order": "north_to_south_row_major",
+    "lat": [
+      75.397302,
+      75.403683,
+      75.410061,
+      75.416436,
+      75.422809,
+      75.39083,
+      75.397209,
+      75.403584,
+      75.409956,
+      75.416326,
+      75.384357,
+      75.390732,
+      75.397104,
+      75.403474,
+      75.40984,
+      75.37788,
+      75.384252,
+      75.390622,
+      75.396988,
+      75.403352,
+      75.371401,
+      75.37777,
+      75.384137,
+      75.3905,
+      75.396861
+    ],
+    "lon": [
+      -89.610917,
+      -89.585255,
+      -89.55957,
+      -89.533863,
+      -89.508133,
+      -89.585624,
+      -89.559962,
+      -89.534278,
+      -89.50857,
+      -89.482841,
+      -89.560353,
+      -89.534692,
+      -89.509007,
+      -89.483301,
+      -89.457571,
+      -89.535105,
+      -89.509444,
+      -89.48376,
+      -89.458054,
+      -89.432325,
+      -89.509879,
+      -89.484219,
+      -89.458535,
+      -89.432829,
+      -89.407101
+    ]
+  },
+  "files": {
+    "height": "height.png",
+    "slope": "slope.png",
+    "depression": "depression.png",
+    "flow": "flow.png",
+    "hydro": "hydro.geojson"
+  },
+  "labels": {
+    "elevation": "measured DEM",
+    "slope": "derived from measured DEM",
+    "depression": "derived from measured DEM",
+    "flow": "derived from measured DEM"
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "note": "Mass, power, and cut rate are sim parameters.",
+  "machines": [
+    {
+      "id": "mass-mover",
+      "stage": 1,
+      "class": "mass-mover",
+      "name": "Mass Ton Mover",
+      "summary": "Cuts diversion channels and grades pads. Banks regolith as fill and local stone.",
+      "length_m": 22,
+      "width_m": 8.6,
+      "height_m": 5.4,
+      "mass_t": 186,
+      "blade_width_m": 8.6,
+      "cut_rate_m3_per_h": 360,
+      "power_kW": 940
+    },
+    {
+      "id": "raw-miner",
+      "stage": 1,
+      "class": "miner",
+      "name": "Raw Earth Miner",
+      "summary": "Opens a borrow pit and banks local stone from frozen ground.",
+      "length_m": 18,
+      "width_m": 7.2,
+      "height_m": 6.8,
+      "mass_t": 142,
+      "blade_width_m": 3.2,
+      "cut_rate_m3_per_h": 240,
+      "power_kW": 760
+    },
+    {
+      "id": "bio-builder",
+      "stage": 2,
+      "class": "bio-builder",
+      "name": "Biological Monitor",
+      "summary": "Reads moisture, slope, and thaw, then sets living soil beds on drained ground.",
+      "length_m": 14,
+      "width_m": 5.4,
+      "height_m": 6.2,
+      "mass_t": 28,
+      "blade_width_m": 2.4,
+      "cut_rate_m3_per_h": 40,
+      "power_kW": 180
+    },
+    {
+      "id": "weather-manipulator",
+      "stage": 2,
+      "class": "weather",
+      "name": "Weather Manipulator",
+      "summary": "Sets a micro-climate shelter tuned to the ninety-day growing window.",
+      "length_m": 16,
+      "width_m": 6.2,
+      "height_m": 5.8,
+      "mass_t": 36,
+      "blade_width_m": 4,
+      "cut_rate_m3_per_h": 20,
+      "power_kW": 220
+    },
+    {
+      "id": "ark-rig",
+      "stage": 3,
+      "class": "ark",
+      "name": "Gene Ark Rig",
+      "summary": "Carries catalog lines to a prepared bed: clone, spawn, or cultivate.",
+      "length_m": 15,
+      "width_m": 5.2,
+      "height_m": 5.1,
+      "mass_t": 24,
+      "blade_width_m": 2,
+      "cut_rate_m3_per_h": 12,
+      "power_kW": 140
+    },
+    {
+      "id": "structure-builder",
+      "stage": 4,
+      "class": "builder",
+      "name": "Structure Builder",
+      "summary": "Lays streets, greenhouses, water works, and township modules from banked stone.",
+      "length_m": 17,
+      "width_m": 6.4,
+      "height_m": 7.4,
+      "mass_t": 64,
+      "blade_width_m": 4,
+      "cut_rate_m3_per_h": 30,
+      "power_kW": 310
+    }
+  ]
+}

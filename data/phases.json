@@ -1,0 +1,49 @@
+{
+  "division": "Creation",
+  "company": "Atla LLC",
+  "peers": {
+    "physics": ["Products", "Modified", "Creation"],
+    "biology": ["Consumed", "Wellness", "Covenant"]
+  },
+  "intro": "Roleplay is how Creation walks a polar desert before the work is asked of the ground. The basin is a measured 4 × 4 km surface in Northern Canada. The succession is the division's roadmap: move mass, put meltwater where it belongs, keep a ninety-day growing season, keep a living catalog, then build a street a person can walk.",
+  "phases": [
+    {
+      "id": 1,
+      "name": "Mass Ton Movers & Raw Earth Miners",
+      "text": "Heavy machines cut diversion channels, drain scattered meltwater into waterways and reservoirs, and grade pads. Cut and fill stay in the basin. Stone is banked on site. Frozen ground costs more energy than thawed ground. Faces stay inside the slope the season can hold."
+    },
+    {
+      "id": 2,
+      "name": "Bio Builder & Weather Manipulator",
+      "text": "Once the ground is graded and drained, the biological monitor reads moisture, slope, and thaw. The weather manipulator sets micro-climate shelters and the monitor sets living soil beds, both tuned to a growing season of about ninety days."
+    },
+    {
+      "id": 3,
+      "name": "Gene Ark",
+      "text": "The Gene Ark holds the catalog for this climate: soil films and lichens, cold-hardy crops and timber, fauna, and the checks a human settlement needs. Clone, spawn, and cultivate land only on prepared ground, and only while the window is open."
+    },
+    {
+      "id": 4,
+      "name": "Structure Builders & Civic Infrastructure",
+      "text": "Structure builders spend banked local stone on streets, greenhouses, water works, and township modules. What is dry and graded can be walked at eye level."
+    }
+  ],
+  "milestones": [
+    { "id": "channel-cut", "phase": 1, "name": "Channel cut", "text": "A mass mover has cut a diversion into the basin." },
+    { "id": "ponds-drained", "phase": 1, "name": "Meltwater drawn down", "text": "Standing water on the working surface is lower than on the measured ground." },
+    { "id": "stone-banked", "phase": 1, "name": "Stone banked", "text": "Local stone is in the bank from cut or pit." },
+    { "id": "pad-graded", "phase": 1, "name": "Pad graded", "text": "A pad has been graded with a fall that sheds water." },
+    { "id": "survey", "phase": 2, "name": "Ground read", "text": "The biological monitor has a reading of moisture, slope, and thaw." },
+    { "id": "dome", "phase": 2, "name": "Shelter set", "text": "A micro-climate shelter stands on drained ground." },
+    { "id": "soil-bed", "phase": 2, "name": "Soil bed", "text": "A living soil bed is placed for the growing window." },
+    { "id": "cultivated", "phase": 3, "name": "Catalog deployed", "text": "A Gene Ark line has been cloned, spawned, or cultivated." },
+    { "id": "grown", "phase": 3, "name": "Window used", "text": "A planting has grown inside the ninety-day window." },
+    { "id": "fauna", "phase": 3, "name": "Fauna released", "text": "A fauna line is on prepared cover." },
+    { "id": "street", "phase": 4, "name": "Street laid", "text": "A street runs on dry, graded ground." },
+    { "id": "greenhouse", "phase": 4, "name": "Greenhouse", "text": "A greenhouse stands on the pad." },
+    { "id": "waterworks", "phase": 4, "name": "Water works", "text": "Water works are set beside the drained ground." },
+    { "id": "township", "phase": 4, "name": "Township module", "text": "A township module is set on stone." },
+    { "id": "walked", "phase": 4, "name": "Walked", "text": "Someone has walked the street." },
+    { "id": "settlement-ready", "phase": 4, "name": "Settlement readiness", "text": "Water, calories, shelter, and a walked street are all in place." }
+  ]
+}

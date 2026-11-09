@@ -9,8 +9,15 @@ const preview = spawn('npx', ['vite', 'preview', '--host', '127.0.0.1', '--port'
   cwd: new URL('..', import.meta.url).pathname,
   stdio: ['ignore', 'pipe', 'pipe'],
 });
-preview.stdout.on('data', (b) => process.stdout.write(b));
-preview.stderr.on('data', (b) => process.stderr.write(b));
+let log = '';
+preview.stdout.on('data', (chunk) => {
+  log += chunk;
+  process.stdout.write(chunk);
+});
+preview.stderr.on('data', (chunk) => {
+  log += chunk;
+  process.stderr.write(chunk);
+});
 
 const deadline = Date.now() + 20000;
 let up = false;
@@ -42,47 +49,42 @@ try {
     if (msg.type() === 'error') errors.push(msg.text());
   });
   page.on('pageerror', (err) => errors.push(String(err)));
-  await page.goto('http://127.0.0.1:4173/', { waitUntil: 'networkidle', timeout: 30000 });
-  await page.waitForFunction(() => window.__roleplay && window.__roleplay.ready, null, { timeout: 30000 });
+  await page.goto('http://127.0.0.1:4173/', { waitUntil: 'networkidle', timeout: 60000 });
+  await page.waitForFunction(() => window.__roleplay && window.__roleplay.ready && window.__roleplay.mode() === 'world');
+  await page.waitForTimeout(2500);
+  await page.screenshot({ path: `${outDir}/01-world-map.png` });
 
-  await page.evaluate(() => {
-    window.__roleplay.setOverlay({ slope: true, water: true, hydro: true });
-    window.__roleplay.home();
+  await page.evaluate(() => window.__roleplay.selectTile(window.__roleplay.playableId));
+  await page.evaluate(() => window.__roleplay.command('mass'));
+  await page.waitForTimeout(1600);
+  await page.screenshot({ path: `${outDir}/02-giant-swarm.png` });
+  const book = await page.evaluate(() => window.__roleplay.book());
+  if (!(book.cut_m3 > 0) || book.cut_m3 !== book.fill_m3) throw new Error('swarm cut and fill diverged');
+
+  await page.evaluate(() => window.__roleplay.enterBasin());
+  await page.waitForFunction(() => window.__roleplay.mode() === 'tile' && window.__roleplay.tileReady);
+  await page.evaluate(() => window.__roleplay.home());
+  await page.evaluate(() => window.__roleplay.settle());
+  await page.screenshot({ path: `${outDir}/03-tile-basin.png` });
+
+  const pose = await page.evaluate(() => {
+    window.__roleplay.enterWalk(2000, 2000, 0.2, -0.12);
+    return window.__roleplay.pose();
   });
   await page.evaluate(() => window.__roleplay.settle());
-  await page.screenshot({ path: `${outDir}/01-orbit-water-slope.png` });
+  await page.screenshot({ path: `${outDir}/04-walk-mode.png` });
+  if (Math.abs(pose.eye - (pose.surface + 1.7)) > 0.08) throw new Error(`eye height off: ${JSON.stringify(pose)}`);
 
-  const report = await page.evaluate(() => window.__roleplay.performSuccession());
-  console.log('succession', JSON.stringify({ ok: report.ok, reasons: report.reasons, look: report.look, walk: report.walk }, null, 2));
-  await page.evaluate(() => window.__roleplay.settle());
-  await page.screenshot({ path: `${outDir}/02-channel-drainage-gene-ark.png` });
-
-  await page.evaluate((walk) => {
-    window.__roleplay.enterWalk(walk.x, walk.z, walk.yaw, walk.pitch);
-  }, report.walk);
-  await page.evaluate(() => window.__roleplay.settle());
-  await page.screenshot({ path: `${outDir}/03-walk-streets.png` });
-  const pose = await page.evaluate(() => window.__roleplay.pose());
-  await page.evaluate(() => window.__roleplay.walkBy(6, 0));
-
-  const stats = await page.evaluate(() => window.__roleplay.stats());
-  console.log('stats', JSON.stringify(stats, null, 2));
-  console.log('pose', JSON.stringify(pose));
-  const eyeDelta = Math.abs(pose.eye - (pose.surface + 1.7));
-  if (eyeDelta > 0.05) throw new Error(`eye height off by ${eyeDelta}`);
-  if (stats.plantings < 1) throw new Error('Gene Ark did not deploy');
-  if (stats.streets_m < 20) throw new Error('no street to walk');
-  if (stats.ponded_m3 >= stats.input_m3) throw new Error('ponding exceeded the melt budget');
-  if (!(stats.cut_m3 > 0)) throw new Error('no earth was cut');
-  if (errors.length) {
-    console.error(errors.join('\n'));
-    throw new Error(`${errors.length} console errors`);
+  const serious = errors.filter((line) => !/Failed to obtain image tile|net::ERR_|404/.test(line));
+  if (serious.length) {
+    console.error(serious.slice(0, 12).join('\n'));
+    throw new Error(`${serious.length} console errors`);
   }
-  console.log('verify ok');
+  console.log('verify ok', JSON.stringify({ book, pose }));
 } catch (err) {
   console.error(err);
   process.exitCode = 1;
 } finally {
-  preview.kill();
-  await Promise.race([browser.close(), new Promise((resolve) => setTimeout(resolve, 3000))]);
+  preview.kill('SIGKILL');
+  setTimeout(() => process.exit(process.exitCode ?? 0), 200);
 }

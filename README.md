@@ -1,6 +1,10 @@
 # Roleplay
 
-Roleplay is the Creation division's interactive 3D view of a polar-desert succession. The ground is a measured 4 × 4 km basin in Northern Canada. Mass movers cut and drain it, a biological monitor and weather manipulator prepare a ninety-day growing season, the Gene Ark deploys a living catalog, and structure builders lay streets that can be walked.
+Roleplay is the Creation division's world map and measured basin. The map is a CesiumJS globe (Apache-2.0) split into Tier 1 cold squares, north first: Northern Canada, the United States including North Dakota, Northern Europe, Russia, and Antarctica. One square, the Polar Desert Basin, opens the measured 4 × 4 km surface. There the existing Three.js basin keeps real ArcticDEM and NHN ground, cold-method drainage, the ninety-day window, and a 1.7 m walk.
+
+At globe scale the player is a giant. Swarm orders move mass movers, then the bio builder and weather manipulator, then structure builders, across a selected square. Cut and fill on that view are conserved sim parameters. They do not rewrite the measured basin.
+
+The globe does not use Cesium ion. Imagery is Sentinel-2 cloudless from EOX over the Natural Earth II mosaic shipped with CesiumJS. Species dots are a thin GBIF occurrence layer. The Gene Ark catalog is still what gets deployed inside the basin.
 
 It is a static site. `base` is `./`, so `dist/` can sit at the root of a host, on a subpath such as `https://atlas.rehab/creation/roleplay/`, or on a subdomain such as `https://roleplay.atlas.rehab/`.
 

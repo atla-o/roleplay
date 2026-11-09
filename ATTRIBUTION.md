@@ -20,6 +20,16 @@ Licence: [Open Government Licence – Canada](https://open.canada.ca/en/open-gov
 
 Slope, closed-depression depth, and D8 flow accumulation are derived from the measured elevation grid. Derived flow lines in `hydro.geojson` are marked `derived-flow-accumulation` and are not NHN features.
 
+## World imagery
+
+Sentinel-2 cloudless by [EOX IT Services GmbH](https://s2maps.eu) (CC BY 4.0), containing modified Copernicus Sentinel data 2021. The fallback mosaic is Natural Earth II, shipped with CesiumJS and in the public domain.
+
+## Species layer
+
+Occurrence points in `public/data/occurrences.json` were retrieved from the [GBIF Occurrence API](https://www.gbif.org) on 2026-11-09. Cite GBIF.org. Each record keeps the licence of its source dataset.
+
 ## Viewer
 
-The browser viewer uses [Three.js](https://threejs.org/) (MIT). Machine rates, permafrost detention, and the ninety-day growing window are sim parameters. Elevations in `public/data/` are the measured DEM.
+The world map uses [CesiumJS](https://cesium.com/cesiumjs/) (Apache-2.0). The basin uses [Three.js](https://threejs.org/) (MIT). Machine rates, permafrost detention, swarm volumes, and the ninety-day growing window are sim parameters. Elevations in the basin are the measured DEM.
+
+Roleplay's own code is MIT, copyright Atla LLC, 2026. See `LICENSE`.

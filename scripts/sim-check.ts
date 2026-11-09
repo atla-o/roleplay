@@ -1,3 +1,5 @@
+import { commandSwarm, emptyBook } from '../src/world/books';
+import { PLAYABLE, TILES } from '../src/world/tiles';
 import { readFileSync } from 'node:fs';
 import { decodeGrayPng } from '../src/load/png';
 import { Heightfield } from '../src/sim/grid';
@@ -59,6 +61,18 @@ const after = solveWater(basin.z, basin.cols, basin.rows, basin.spacing, cfg, ba
 assert(after.depth[low.low] < bowlDepth * 0.35, `outlet should empty the bowl (${bowlDepth.toFixed(2)} m -> ${after.depth[low.low].toFixed(2)} m)`);
 assert(after.ponded_m3 < before.ponded_m3, `standing water should fall (${before.ponded_m3} -> ${after.ponded_m3})`);
 assert(Math.abs(after.ponded_m3 + after.runoff_m3 - after.input_m3) < after.input_m3 * 0.02, 'water was not conserved');
+
+assert(TILES.length > 20, 'the world should be split into squares');
+assert(PLAYABLE.playable && PLAYABLE.id === 'polar-desert-basin', 'the measured basin square is missing');
+assert(PLAYABLE.west <= -89.509 && PLAYABLE.east > -89.509, 'basin longitude is outside its square');
+const book = emptyBook();
+assert(!commandSwarm(book, 'bio').ok, 'bio swarm should wait for drainage');
+commandSwarm(book, 'mass');
+commandSwarm(book, 'mass');
+assert(book.fill_m3 === book.cut_m3, 'swarm cut and fill must match');
+assert(commandSwarm(book, 'bio').ok, 'bio swarm should open after drainage');
+assert(commandSwarm(book, 'structure').ok, 'structure swarm should spend stone');
+assert(book.stone_m3 < book.cut_m3 * 0.38, 'structure swarm should draw the stone bank');
 
 const png = readFileSync(new URL('../public/data/height.png', import.meta.url));
 const meta = JSON.parse(readFileSync(new URL('../public/data/terrain.json', import.meta.url), 'utf8'));

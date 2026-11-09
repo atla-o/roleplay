@@ -15,7 +15,7 @@ interface TerrainMeta {
   georef: { cols: number; rows: number; lat: number[]; lon: number[] };
 }
 
-export async function boot(root: HTMLElement): Promise<void> {
+export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }): Promise<Record<string, unknown>> {
   const bootEl = document.createElement('div');
   bootEl.className = 'boot';
   bootEl.textContent = 'Reading the measured surface';
@@ -38,6 +38,13 @@ export async function boot(root: HTMLElement): Promise<void> {
   const view = new Viewport(root);
   const hud = new Hud(root, sim.species);
   view.setHydro(hydro, field);
+  const occurrences = await fetch(`${base}data/occurrences.json`)
+    .then((response) => response.json())
+    .catch(() => ({ records: [] as { region: string; species: string; scientificName: string }[] }));
+  hud.setOccurrences(
+    (occurrences.records ?? []).filter((record: { region: string }) => record.region === 'polar-desert-basin'),
+  );
+  if (hooks?.onWorld) hud.onWorld = hooks.onWorld;
   let place = '';
   let drawing: { x: number; z: number }[] = [];
   let walking = false;
@@ -356,6 +363,7 @@ export async function boot(root: HTMLElement): Promise<void> {
     settle: () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))),
   };
   window.__roleplay = api;
+  return api;
 }
 
 function locate(meta: TerrainMeta, x: number, z: number): string {

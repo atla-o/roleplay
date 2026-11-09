@@ -44,6 +44,7 @@ export class Hud {
   onOverlay: () => void = () => {};
   onRestore: () => void = () => {};
   onCommit: () => void = () => {};
+  onWorld: () => void = () => {};
   readonly slopeBox: HTMLInputElement;
   readonly waterBox: HTMLInputElement;
   readonly hydroBox: HTMLInputElement;
@@ -92,6 +93,7 @@ export class Hud {
     root.querySelector('#open-vision')!.addEventListener('click', () => this.vision.showModal());
     root.querySelector('#open-about')!.addEventListener('click', () => this.about.showModal());
     root.querySelector('#restore')!.addEventListener('click', () => this.onRestore());
+    root.querySelector('#open-world')!.addEventListener('click', () => this.onWorld());
     root.querySelectorAll('[data-close]').forEach((btn) => btn.addEventListener('click', () => (btn.closest('dialog') as HTMLDialogElement).close()));
     root.querySelectorAll<HTMLButtonElement>('[data-species]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -161,6 +163,19 @@ export class Hud {
   requestCommit(): void {
     this.onCommit();
   }
+
+  setOccurrences(records: { species: string; scientificName: string }[]): void {
+    const box = document.querySelector('#occurrences');
+    if (!box) return;
+    box.innerHTML = records.length
+      ? records
+          .map(
+            (record) =>
+              `<div class="species"><div class="name">${record.species || record.scientificName}</div><div class="sci">${record.scientificName}</div></div>`,
+          )
+          .join('') + `<p class="peers">GBIF occurrences in this square, not a deployment. <a href="https://www.gbif.org" target="_blank" rel="noreferrer">GBIF.org</a></p>`
+      : `<p class="peers">No GBIF occurrence is stored for this square. The catalog above is what the Gene Ark can deploy. Records are added in public/data/occurrences.json.</p>`;
+  }
 }
 
 function markup(species: Species[]): string {
@@ -193,6 +208,7 @@ function markup(species: Species[]): string {
         <div><div class="word">ROLEPLAY</div><div class="sub">Creation division</div></div>
       </div>
       <div class="place"><strong>Northern Canada</strong><div class="muted">Polar Desert Basin · 4 × 4 km</div></div>
+      <button id="open-world" class="text-btn" type="button" style="width:auto">World map</button>
       <button id="open-vision" class="text-btn" type="button" style="width:auto">Vision</button>
       <div class="phase" id="phase-label">Phase 1</div>
     </header>
@@ -208,6 +224,8 @@ function markup(species: Species[]): string {
       <label class="row"><span>Surveyed hydrography</span><input id="ov-hydro" type="checkbox" checked /></label>
       <div class="kicker">Gene Ark</div>
       ${cards}
+      <div class="kicker">Observed in this square</div>
+      <div id="occurrences"></div>
     </aside>
     <footer class="dock">
       <div class="season">
@@ -246,7 +264,9 @@ function markup(species: Species[]): string {
       <h3>Hydrography</h3>
       <p>Natural Resources Canada, National Hydro Network, work unit 10VE001, flowlines and waterbodies. <a href="https://open.canada.ca/en/open-government-licence-canada">Open Government Licence – Canada</a>.</p>
       <p>Slope, closed depressions, and flow accumulation are derived from the measured DEM. Machine rates, detention, and the ninety-day window are labeled in the inspector as sim parameters.</p>
-      <p class="peers">Creation division · published at atlas.rehab. The viewer is Three.js, MIT.</p>
+      <p>Species dots and the observed list are GBIF occurrences. <a href="https://www.gbif.org">GBIF.org</a>. Each record keeps its source dataset licence.</p>
+      <p>World imagery is Sentinel-2 cloudless by EOX, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>, modified Copernicus Sentinel data 2021, over Natural Earth II. The globe is CesiumJS, Apache-2.0. The basin viewer is Three.js, MIT.</p>
+      <p class="peers">Creation division · published at atlas.rehab.</p>
     </dialog>
   `;
 }

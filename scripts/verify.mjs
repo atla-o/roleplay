@@ -32,9 +32,9 @@ while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 300));
   }
 }
-if (!up) {
+if (!up || log.includes('already in use')) {
   preview.kill();
-  throw new Error('preview did not start');
+  throw new Error(log.includes('already in use') ? 'preview port was already taken' : 'preview did not start');
 }
 
 const errors = [];
@@ -54,6 +54,16 @@ try {
   await page.waitForTimeout(2500);
   await page.screenshot({ path: `${outDir}/01-world-map.png` });
 
+  await page.evaluate(() => window.__roleplay.selectTile('rene-levasseur'));
+  await page.waitForTimeout(4500);
+  await page.screenshot({ path: `${outDir}/05-ring-globe.png` });
+  await page.evaluate(() => window.__roleplay.enterBasin());
+  await page.waitForFunction(() => window.__roleplay.mode() === 'tile' && window.__roleplay.home);
+  await page.evaluate(() => window.__roleplay.home());
+  await page.evaluate(() => window.__roleplay.settle());
+  await page.screenshot({ path: `${outDir}/06-ring-tile.png` });
+  await page.evaluate(() => window.__roleplay.showWorld());
+  await page.waitForFunction(() => window.__roleplay.mode() === 'world');
   await page.evaluate(() => window.__roleplay.selectTile(window.__roleplay.playableId));
   await page.evaluate(() => window.__roleplay.command('mass'));
   await page.waitForTimeout(1600);

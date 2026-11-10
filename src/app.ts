@@ -194,7 +194,9 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
   refresh();
 
   let last = performance.now();
+  let alive = true;
   const loop = (now: number) => {
+    if (!alive) return;
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (walking) step(dt);
@@ -361,6 +363,9 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
     },
     pose: () => ({ x: wx, z: wz, yaw, pitch, eye: sim.surfaceAt(wx, wz).y + sim.physics.walk_eye_m }),
     settle: () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))),
+    stop: () => {
+      alive = false;
+    },
   };
   window.__roleplay = api;
   return api;

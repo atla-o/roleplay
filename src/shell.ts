@@ -1,4 +1,5 @@
 import { boot } from './app';
+import { bootRing } from './observe/boot';
 import type { Occurrence } from './world/globe';
 import { WorldGlobe } from './world/globe';
 import { WorldPanel } from './world/panel';
@@ -23,8 +24,9 @@ export async function start(root: HTMLElement): Promise<void> {
     .catch(() => ({ records: [] as Occurrence[] }));
   const records = (occurrences.records ?? []) as Occurrence[];
 
-  let status = 'Northern Canada is the first square with a measured basin.';
+  let status = 'Northern Canada is the first measured basin. Île René-Levasseur is the second square, for observation.';
   let tileApi: Record<string, unknown> | null = null;
+  let tileStop: (() => void) | null = null;
   let mode: 'world' | 'tile' = 'world';
 
   const panel = new WorldPanel(world);
@@ -45,8 +47,13 @@ export async function start(root: HTMLElement): Promise<void> {
   panel.onTile = (id) => globe.select(id, true);
   panel.onCommand = (kind) => {
     const result = globe.command(kind);
-    const names = { mass: 'Mass ton movers', bio: 'Bio builder and weather manipulator', structure: 'Structure builders' };
-    status = result.ok ? `${names[kind]} are crossing the square.` : result.reason || 'The swarm holds.';
+    const names = {
+      mass: 'Mass ton movers',
+      bio: 'Bio builder and weather manipulator',
+      structure: 'Structure builders',
+      survey: 'Monitoring crew',
+    };
+    status = result.ok ? `${names[kind]} ${kind === 'survey' ? 'are crossing the square. No ground is moved.' : 'are crossing the square.'}` : result.reason || 'The swarm holds.';
     render();
   };
   panel.onEnter = () => {
@@ -58,8 +65,9 @@ export async function start(root: HTMLElement): Promise<void> {
   render();
 
   async function enterBasin(): Promise<void> {
-    if (!globe.tile().playable) {
-      status = 'Only the Polar Desert Basin has a measured surface.';
+    const chosen = globe.tile();
+    if (!chosen.playable) {
+      status = 'This square has no measured surface yet.';
       render();
       return;
     }
@@ -67,17 +75,23 @@ export async function start(root: HTMLElement): Promise<void> {
     world.hidden = true;
     tile.hidden = false;
     mode = 'tile';
-    if (!tileApi) {
-      tileApi = await boot(tile, {
-        onWorld: () => {
-          tile.hidden = true;
-          world.hidden = false;
-          mode = 'world';
-          globe.resume();
-          publish();
-        },
-      });
-    }
+    tileStop?.();
+    tile.replaceChildren();
+    const hooks = { onWorld: () => leaveTile() };
+    const started = chosen.mode === 'observe' ? await bootRing(tile, hooks) : await boot(tile, hooks);
+    tileApi = started;
+    tileStop = typeof started.stop === 'function' ? (started.stop as () => void) : null;
+    publish();
+  }
+
+  function leaveTile(): void {
+    tileStop?.();
+    tileStop = null;
+    tileApi = null;
+    tile.hidden = true;
+    world.hidden = false;
+    mode = 'world';
+    globe.resume();
     publish();
   }
 
@@ -93,13 +107,7 @@ export async function start(root: HTMLElement): Promise<void> {
       command: (kind: 'mass' | 'bio' | 'structure') => globe.command(kind),
       book: () => ({ ...globe.book() }),
       enterBasin,
-      showWorld: () => {
-        tile.hidden = true;
-        world.hidden = false;
-        mode = 'world';
-        globe.resume();
-        publish();
-      },
+      showWorld: () => leaveTile(),
     };
   }
 

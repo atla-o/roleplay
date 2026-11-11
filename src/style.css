@@ -142,6 +142,7 @@ canvas { display: block; }
   padding: 8px 12px 10px;
 }
 .coach p { margin: 0; font-size: 13px; line-height: 1.35; }
+#coach { z-index: 4; }
 #coach-how { color: var(--muted); margin-top: 2px; }
 .coach .tool { width: auto; display: inline-block; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--line); }
 button:disabled { opacity: 0.45; cursor: default; }

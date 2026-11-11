@@ -76,6 +76,10 @@ export class Director {
     if (this.view === 'orbit') this.orbitRange = Math.max(400, Math.min(2_000_000, this.orbitRange * (delta > 0 ? 1.08 : 0.92)));
   }
 
+  get blending(): boolean {
+    return this.blend < 1;
+  }
+
   report(): { blend: number; shot: number; from: number } {
     return { blend: this.blend, shot: this.applied.height, from: this.from.height };
   }

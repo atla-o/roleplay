@@ -20,6 +20,20 @@ Licence: [Open Government Licence – Canada](https://open.canada.ca/en/open-gov
 
 Slope, closed-depression depth, and D8 flow accumulation are derived from the measured elevation grid. Derived flow lines in `hydro.geojson` are marked `derived-flow-accumulation` and are not NHN features.
 
+## Ground between the measured tiles
+
+The globe between Polar Desert Basin and Île René-Levasseur is the Mapzen/Tilezen terrarium elevation, copied into `public/dem/terrarium` because the public bucket `s3://elevation-tiles-prod` does not send CORS headers a browser can read. Zoom 3 covers the whole earth. Zoom 5 covers the corridor from about 46°N to 80°N and 102°W to 52°W, which is the walk from the basin to the ring. The app loads only the tiles in view.
+
+The tiles are a composite. The sources used for this corridor, and the credit each one asks for:
+
+- ArcticDEM. DEMs were created from DigitalGlobe, Inc. imagery and funded under National Science Foundation awards 1043681, 1559691, and 1542736.
+- ETOPO1. U.S. National Oceanic and Atmospheric Administration. Public domain in the United States. Not for navigation.
+- GMTED2010, SRTM, and 3DEP. Courtesy of the U.S. Geological Survey. Public domain.
+- Canada. Contains information licensed under the [Open Government Licence – Canada](https://open.canada.ca/en/open-government-licence-canada).
+- Europe. Produced using Copernicus data and information funded by the European Union (EU-DEM).
+
+Oceans are held at sea level so the giant walks the water surface rather than the seabed. The full terrarium attribution list is the one published with [joerd](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
+
 ## World imagery
 
 Sentinel-2 cloudless by [EOX IT Services GmbH](https://s2maps.eu) (CC BY 4.0), containing modified Copernicus Sentinel data 2021. The fallback mosaic is Natural Earth II, shipped with CesiumJS and in the public domain.
@@ -42,7 +56,9 @@ Occurrence points in `public/data/occurrences.json` were retrieved from the [GBI
 
 The world is one CesiumJS scene (Apache-2.0). Orbit, the site overview, and the driver camera read the same heightfield. There is no second scene and no reload when the camera flies from orbit to the ground.
 
-Vehicles are a raycast chassis from [cannon-es](https://github.com/pmndrs/cannon-es) 0.20.0 (MIT). The dozer pushes soil ahead of the blade. The excavator holds soil in a bucket. The hauler dumps it. Cut volume, fill volume, and the load in the machines are the same soil.
+Vehicles are a raycast chassis from [cannon-es](https://github.com/pmndrs/cannon-es) 0.20.0 (MIT). The dozer pushes soil ahead of the blade on a 1 m grid in a 256 m window. When that window slides, or the driver gets out, the edit is baked into the coarse heightfield by volume. Cut volume, fill volume, and the load in the machines are the same soil.
+
+The engine and track tone is synthesized in the browser from oscillators. It is not a sampled recording. It stays muted until the Settings checkbox is turned on.
 
 The machine meshes are Kenney's Car Kit (`tractor-shovel.glb`, `tractor.glb`, `garbage-truck.glb`) and the shared `models/Textures/colormap.png` those files reference, [CC0](https://creativecommons.org/publicdomain/zero/1.0/). Credit Kenney, https://kenney.nl/assets/car-kit. No Blender or other GPL program code is included. The texture sits beside the models at the path the glTF asks for, so it resolves under a nested preview base.
 

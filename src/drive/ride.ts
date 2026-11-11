@@ -37,6 +37,10 @@ export class Yard {
   private readonly shape: CANNON.Heightfield;
   private readonly data: number[][];
   private accumulator = 0;
+  /** Ground the wheels stand on. The fine edit layer replaces the coarse posts while it is open. */
+  surface: (east: number, north: number) => number = (east, north) => this.field.sample(east, north);
+  /** Machine-scale cut. When set, the blade does not edit the coarse posts directly. */
+  sculpt: ((east: number, north: number, heading: number, width: number, depth: number) => number) | null = null;
 
   constructor(readonly field: Field) {
     this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
@@ -121,8 +125,8 @@ export class Yard {
 
   grade(rig: Rig): number {
     const pose = this.pose(rig);
-    const here = this.field.sample(pose.east, pose.north);
-    const ahead = this.field.sample(pose.east + Math.sin(pose.heading) * 14, pose.north + Math.cos(pose.heading) * 14);
+    const here = this.surface(pose.east, pose.north);
+    const ahead = this.surface(pose.east + Math.sin(pose.heading) * 14, pose.north + Math.cos(pose.heading) * 14);
     return (Math.atan2(ahead - here, 14) * 180) / Math.PI;
   }
 
@@ -180,7 +184,7 @@ export class Yard {
       const body = rig.vehicle.chassisBody;
       const x = Math.max(margin, Math.min(spanE - margin, body.position.x));
       const z = Math.max(margin, Math.min(spanN - margin, body.position.z));
-      const ground = this.field.sample(x, z);
+      const ground = this.surface(x, z);
       let y = body.position.y;
       if (y < ground + 0.8) {
         y = ground + 1.15;
@@ -231,11 +235,16 @@ export class Yard {
     if (input.raise) rig.bladeAngle = Math.min(0.6, rig.bladeAngle + dt * 1.4);
     if (input.lower) rig.bladeAngle = Math.max(-0.75, rig.bladeAngle - dt * 1.4);
     if (rig.kind === 'dozer' && rig.bladeAngle < -0.04 && Math.abs(pose.speed) > 0.4) {
-      const reach = spec.length / 2 + this.field.spacing * 0.55;
-      const ground = this.field.sample(pose.east + Math.sin(pose.heading) * reach, pose.north + Math.cos(pose.heading) * reach);
-      const edge = ground + Math.sin(rig.bladeAngle) * 1.6;
-      if (ground > edge + 0.03) {
-        planeBlade(this.field, pose.east + Math.sin(pose.heading) * reach, pose.north + Math.cos(pose.heading) * reach, pose.heading, Math.max(spec.width, this.field.spacing), edge);
+      const depth = -Math.sin(rig.bladeAngle) * 1.15;
+      if (this.sculpt) {
+        this.sculpt(pose.east + Math.sin(pose.heading) * (spec.length / 2 + 1.2), pose.north + Math.cos(pose.heading) * (spec.length / 2 + 1.2), pose.heading, spec.width, depth);
+      } else {
+        const reach = spec.length / 2 + this.field.spacing * 0.55;
+        const ground = this.field.sample(pose.east + Math.sin(pose.heading) * reach, pose.north + Math.cos(pose.heading) * reach);
+        const edge = ground - depth;
+        if (ground > edge + 0.03) {
+          planeBlade(this.field, pose.east + Math.sin(pose.heading) * reach, pose.north + Math.cos(pose.heading) * reach, pose.heading, Math.max(spec.width, this.field.spacing), edge);
+        }
       }
     }
     if (rig.kind === 'excavator' && input.dig && rig.loadM3 < 24) {

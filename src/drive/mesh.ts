@@ -15,7 +15,7 @@ export interface CoverHole {
  * Height of the feather outside a patch, in the patch's local metres.
  * Null when the point is inside the measured grid or beyond the feather.
  */
-export function feathered(field: Field, east: number, north: number): number | null {
+export function feathered(field: Field, east: number, north: number, outside = 0): number | null {
   const width = (field.cols - 1) * field.spacing;
   const height = (field.rows - 1) * field.spacing;
   const dx = east < 0 ? -east : east > width ? east - width : 0;
@@ -25,7 +25,7 @@ export function feathered(field: Field, east: number, north: number): number | n
   const edge = field.sample(Math.max(0, Math.min(width, east)), Math.max(0, Math.min(height, north)));
   const t = dist / FEATHER_M;
   const s = t * t * (3 - 2 * t);
-  return edge * (1 - s);
+  return edge * (1 - s) + outside * s;
 }
 
 function appearance(color: Cesium.Color, translucent: boolean): Cesium.PerInstanceColorAppearance {
@@ -93,6 +93,7 @@ export class ChunkLayer {
   private readonly chunks = new Map<string, Cesium.Primitive>();
   private water: Cesium.Primitive | null = null;
   private apron: Cesium.Primitive | null = null;
+  private outside: (east: number, north: number) => number = () => 0;
   private waterDirty = false;
   private builtAt = 0;
   private waterAt = 0;
@@ -106,7 +107,7 @@ export class ChunkLayer {
     private readonly hole: CoverHole | null = null,
   ) {
     this.field.touchAll();
-    this.apron = apronPrimitive(field, west, south);
+    this.apron = apronPrimitive(field, west, south, this.outside);
     this.viewer.scene.primitives.add(this.apron);
     this.flush(400, true);
     this.waterDirty = true;
@@ -116,6 +117,14 @@ export class ChunkLayer {
   setDepth(depth: Float32Array): void {
     this.depth = depth;
     this.waterDirty = true;
+  }
+
+  /** Feather the skirt toward the global elevation instead of the ellipsoid. */
+  retarget(outside: (east: number, north: number) => number): void {
+    this.outside = outside;
+    if (this.apron) this.viewer.scene.primitives.remove(this.apron);
+    this.apron = apronPrimitive(this.field, this.west, this.south, outside);
+    this.viewer.scene.primitives.add(this.apron);
   }
 
   /** Rebuild a few dirty chunks. Pass `now` so a blade scrape cannot upload a mesh every frame. */
@@ -137,7 +146,7 @@ export class ChunkLayer {
       const r0 = Number(rs) * this.field.chunk;
       const previous = this.chunks.get(key);
       if (previous) this.viewer.scene.primitives.remove(previous);
-      const next = chunkPrimitive(this.field, this.west, this.south, c0, r0, this.hole);
+      const next = chunkPrimitive(this.field, this.west, this.south, c0, r0, this.hole, chunkFade(this.field, c0, r0));
       if (next) {
         this.viewer.scene.primitives.add(next);
         this.chunks.set(key, next);
@@ -160,7 +169,18 @@ export class ChunkLayer {
   }
 }
 
-function chunkPrimitive(field: Field, west: number, south: number, c0: number, r0: number, hole: CoverHole | null): Cesium.Primitive | null {
+function chunkFade(field: Field, c0: number, r0: number): number {
+  const nc = Math.max(1, Math.ceil((field.cols - 1) / field.chunk));
+  const nr = Math.max(1, Math.ceil((field.rows - 1) / field.chunk));
+  const cx = (c0 / field.chunk) | 0;
+  const rx = (r0 / field.chunk) | 0;
+  const inset = Math.min(cx, rx, nc - 1 - cx, nr - 1 - rx);
+  if (inset <= 0) return 0.32;
+  if (inset === 1) return 0.7;
+  return 1;
+}
+
+function chunkPrimitive(field: Field, west: number, south: number, c0: number, r0: number, hole: CoverHole | null, alpha = 1): Cesium.Primitive | null {
   const c1 = Math.min(field.cols - 1, c0 + field.chunk);
   const r1 = Math.min(field.rows - 1, r0 + field.chunk);
   const positions: number[] = [];
@@ -181,7 +201,8 @@ function chunkPrimitive(field: Field, west: number, south: number, c0: number, r
     }
   }
   if (!index.length) return null;
-  return primitive(new Float64Array(positions), index, Cesium.Color.fromCssColorString('#d2c0a4'), false);
+  const color = Cesium.Color.fromCssColorString('#d2c0a4').withAlpha(alpha);
+  return primitive(new Float64Array(positions), index, color, alpha < 0.98);
 }
 
 function waterPrimitive(field: Field, west: number, south: number, depth: Float32Array): Cesium.Primitive | null {
@@ -207,7 +228,7 @@ function waterPrimitive(field: Field, west: number, south: number, depth: Float3
 }
 
 /** Ease the measured edge down to the ellipsoid over FEATHER_M so the tile has no square cliff and no underside. */
-function apronPrimitive(field: Field, west: number, south: number): Cesium.Primitive {
+function apronPrimitive(field: Field, west: number, south: number, outside: (east: number, north: number) => number): Cesium.Primitive {
   const rings = 12;
   const reach = FEATHER_M;
   const { cols, rows, spacing } = field;
@@ -220,10 +241,10 @@ function apronPrimitive(field: Field, west: number, south: number): Cesium.Primi
     writeVertex(west, south, east, north, up, positions);
     return id;
   };
-  const drop = (edge: number, k: number) => {
+  const drop = (edge: number, k: number, east: number, north: number) => {
     const t = k / rings;
     const s = t * t * (3 - 2 * t);
-    return edge * (1 - s);
+    return edge * (1 - s) + outside(east, north) * s;
   };
   const side = (count: number, at: (i: number, dist: number) => [number, number]) => {
     const ids: number[][] = [];
@@ -233,7 +254,7 @@ function apronPrimitive(field: Field, west: number, south: number): Cesium.Primi
       for (let i = 0; i < count; i++) {
         const edgeH = displayHeight(field, Math.round(at(i, 0)[0] / field.spacing), Math.round(at(i, 0)[1] / field.spacing));
         const [east, north] = at(i, dist);
-        line.push(add(east, north, drop(edgeH, k)));
+        line.push(add(east, north, drop(edgeH, k, east, north)));
       }
       ids.push(line);
     }
@@ -259,7 +280,9 @@ function apronPrimitive(field: Field, west: number, south: number): Cesium.Primi
       const dist = (k / rings) * reach;
       for (let s = 0; s <= segs; s++) {
         const ang = a0 + ((a1 - a0) * s) / segs;
-        line.push(add(ox + Math.cos(ang) * dist, oy + Math.sin(ang) * dist, drop(edgeH, k)));
+        const east = ox + Math.cos(ang) * dist;
+        const north = oy + Math.sin(ang) * dist;
+        line.push(add(east, north, drop(edgeH, k, east, north)));
       }
       ids.push(line);
     }
@@ -277,5 +300,5 @@ function apronPrimitive(field: Field, west: number, south: number): Cesium.Primi
   corner(width, 0, Math.PI * 1.5, Math.PI * 2, displayHeight(field, cols - 1, 0));
   corner(width, height, 0, Math.PI * 0.5, displayHeight(field, cols - 1, rows - 1));
   corner(0, height, Math.PI * 0.5, Math.PI, displayHeight(field, 0, rows - 1));
-  return primitive(new Float64Array(positions), index, Cesium.Color.fromCssColorString('#c4b59a'), false);
+  return primitive(new Float64Array(positions), index, Cesium.Color.fromCssColorString('#c8c2b4').withAlpha(0.42), true);
 }

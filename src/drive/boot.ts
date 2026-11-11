@@ -5,6 +5,10 @@ import { Field, metersPerDegree, offsetDegrees, resampleNorthUp } from './field'
 import { ChunkLayer, feathered, type CoverHole } from './mesh';
 import { raindrops } from './sculpt';
 import { Yard, type DriveInput, type Rig, type RigKind } from './ride';
+import { Detail } from './detail';
+import { Relief } from './dem';
+import { COACH, Dust, Engine } from './feel';
+import { FineLayer } from './fine';
 import { Director, drawMinimap, type ViewId } from './views';
 
 interface Patch {
@@ -165,12 +169,65 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       const scale = metersPerDegree(patch.south);
       const east = (lon - patch.west) * scale.lon;
       const north = (lat - patch.south) * scale.lat;
-      const eased = feathered(patch.field, east, north);
+      const eased = feathered(patch.field, east, north, relief.sample(lon, lat) ?? 0);
       if (eased != null) return eased;
     }
     return null;
   };
-  const groundAt = (lon: number, lat: number): number => reliefAt(lon, lat) ?? 0;
+  const relief = new Relief(base, viewer);
+  relief.prefetch(basin.anchorLon, basin.anchorLat);
+  relief.prefetch(ring.anchorLon, ring.anchorLat);
+  const engine = new Engine();
+  const dust = new Dust(viewer);
+  let detail: Detail | null = null;
+  let fine: FineLayer | null = null;
+  let detailPlace: Place | null = null;
+  const apronQueue: Patch[] = [];
+  let apronQueued = false;
+  let coached = '';
+  const groundAt = (lon: number, lat: number): number => reliefAt(lon, lat) ?? relief.sample(lon, lat) ?? 0;
+  const closeDetail = () => {
+    if (!detail || !detailPlace) return;
+    const place = detailPlace;
+    detail.bakeAll();
+    fine?.destroy();
+    place.yard.sculpt = null;
+    place.yard.surface = (east, north) => place.ground.field.sample(east, north);
+    detail = null;
+    fine = null;
+    detailPlace = null;
+    refresh(place);
+  };
+  const openDetail = (place: Place, east: number, north: number) => {
+    if (detailPlace && detailPlace !== place) closeDetail();
+    if (!detail || !fine) {
+      detail = new Detail(place.ground.field);
+      fine = new FineLayer(viewer, place.ground.west, place.ground.south, detail);
+      detailPlace = place;
+    }
+    detail.follow(east, north);
+    place.yard.surface = (sampleE, sampleN) => detail?.sample(sampleE, sampleN) ?? place.ground.field.sample(sampleE, sampleN);
+    place.yard.sculpt = (sampleE, sampleN, heading, width, depth) => detail?.cut(sampleE, sampleN, heading, width, depth) ?? 0;
+  };
+  const showCoach = (view: ViewId) => {
+    if (coached === view) return;
+    coached = view;
+    let seen = false;
+    try {
+      seen = localStorage.getItem(`roleplay-coach-${view}`) === '1';
+    } catch {
+      seen = true;
+    }
+    const card = root.querySelector<HTMLElement>('#coach');
+    const text = root.querySelector('#coach-text');
+    if (!card || !text) return;
+    if (seen) {
+      card.hidden = true;
+      return;
+    }
+    text.textContent = COACH[view] ?? '';
+    card.hidden = false;
+  };
   const rigGeo = (place: Place, rig: Rig) => {
     const pose = place.yard.pose(rig);
     const at = offsetDegrees(place.ground.south, place.ground.west, pose.east, pose.north);
@@ -256,6 +313,24 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   });
   root.querySelector('#open-credits')?.addEventListener('click', () => root.querySelector<HTMLDialogElement>('#credits')?.showModal());
   root.querySelector('#open-settings')?.addEventListener('click', () => root.querySelector<HTMLDialogElement>('#settings')?.showModal());
+  root.querySelector('#coach-ok')?.addEventListener('click', () => {
+    const card = root.querySelector<HTMLElement>('#coach');
+    if (card) card.hidden = true;
+    try {
+      localStorage.setItem(`roleplay-coach-${director.view}`, '1');
+    } catch {
+      /* private mode */
+    }
+  });
+  root.querySelector<HTMLInputElement>('#sound-toggle')?.addEventListener('change', (ev) => {
+    const on = (ev.target as HTMLInputElement).checked;
+    engine.setEnabled(on);
+    try {
+      localStorage.setItem('roleplay-sound', on ? '1' : '0');
+    } catch {
+      /* private mode */
+    }
+  });
   root.querySelectorAll('[data-close]').forEach((button) => {
     button.addEventListener('click', () => button.closest('dialog')?.close());
   });
@@ -350,7 +425,17 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       if (under) focus = under;
     }
     const driving = director.view === 'vehicle' && active && focus.yard.rigs.includes(active) ? active : null;
-    if (driving) focus.yard.step(dt, driving, input);
+    const cutBefore = focus.ground.field.cutM3;
+    if (driving) {
+      const pose = focus.yard.pose(driving);
+      openDetail(focus, pose.east, pose.north);
+      focus.yard.step(dt, driving, input);
+      fine?.flush(director.blending ? 6 : 2);
+      if (focus.ground.field.cutM3 > cutBefore + 0.02) {
+        const at = offsetDegrees(focus.ground.south, focus.ground.west, pose.east + Math.sin(pose.heading) * 4, pose.north + Math.cos(pose.heading) * 4);
+        dust.puff(at.lon, at.lat, pose.up + 0.6);
+      }
+    } else if (detail) closeDetail();
     const working = Boolean(driving) && (input.lower || input.raise || input.dig || input.dump || Math.abs(input.throttle) > 0.2);
     sculptIdle = working ? 0 : sculptIdle + dt;
     input.raise = false;
@@ -371,6 +456,28 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       }
       refresh(focus);
     }
+    if (!apronQueued && relief.sample(focus.anchorLon, focus.anchorLat) != null) {
+      apronQueued = true;
+      for (const place of places) {
+        apronQueue.push(place.ground);
+        if (place.context) apronQueue.push(place.context);
+      }
+    }
+    const apron = apronQueue.shift();
+    if (apron) {
+      apron.layer?.retarget((east, north) => {
+        const ll = offsetDegrees(apron.south, apron.west, east, north);
+        return relief.sample(ll.lon, ll.lat) ?? 0;
+      });
+    }
+    relief.update(director.anchor.lon, director.anchor.lat, places.map((place) => {
+      const east = offsetDegrees(place.ground.south, place.ground.west, place.ground.widthM, 0).lon;
+      const north = offsetDegrees(place.ground.south, place.ground.west, 0, place.ground.heightM).lat;
+      return { west: place.ground.west - 0.12, south: place.ground.south - 0.08, east: east + 0.12, north: north + 0.08 };
+    }));
+    engine.throttle(driving ? Math.abs(input.throttle) : 0);
+    dust.step(elapsed);
+    showCoach(director.view);
     poseModels(drawn);
     paint(focus);
     drawMinimap(
@@ -414,6 +521,8 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     setView: (id: ViewId) => chooseView(id),
     view: () => director.view,
     held: () => [...keys],
+    ground: (lon: number, lat: number) => groundAt(lon, lat),
+    detail: () => (detail ? detail.deltaM3() : null),
     seat: () => {
       const rig = active ?? focus.yard.rigs[0];
       if (!rig) return null;
@@ -685,6 +794,10 @@ function markup(): string {
       </div>
     </aside>
     <canvas id="minimap" class="minimap" width="168" height="168"></canvas>
+    <div id="coach" class="coach" hidden>
+      <p id="coach-text"></p>
+      <button id="coach-ok" class="tool" type="button">Got it</button>
+    </div>
     <dialog id="settings">
       <button class="close" data-close type="button">Close</button>
       <h2>Settings</h2>
@@ -697,6 +810,7 @@ function markup(): string {
       </div>
       <h3>Hands</h3>
       <p>Titan and Sky use WASD and the mouse. Shift lengthens a Titan stride. In a machine, R raises the blade and F or the wheel lowers it. G digs, T dumps, Space brakes.</p>
+      <label class="peers"><input id="sound-toggle" type="checkbox"> Engine and tracks</label>
     </dialog>
     <dialog id="credits">
       <button class="close" data-close type="button">Close</button>
@@ -704,7 +818,8 @@ function markup(): string {
       <p>One measured world. Orbit, the overview, and the driver read the same heightfield. Soil that is cut is filled somewhere else, or held in a machine.</p>
       <p>Polar Desert Basin is Northern Canada, ArcticDEM v4.1, CC-BY-4.0, Porter et al. 2023, doi:10.7910/DVN/3VDC4W. Hydrography in the older tools is NRCan NHN, Open Government Licence – Canada.</p>
       <p>Île René-Levasseur is in the Nitassinan of the Innu of Pessamit. Louis-Babel Ecological Reserve. Réserve de biodiversité de la Météorite. Manicouagan-Uapishka UNESCO Biosphere Reserve. The reservoir is held by Hydro-Québec's Daniel-Johnson Dam. Elevation is the NRCan HRDEM mosaic, with MRDEM-30 on the same window. Open Government Licence – Canada. Land cover and the water class are NRCan 2020. Species records are GBIF.</p>
-      <p>The globe is CesiumJS, Apache-2.0. Vehicles use cannon-es, MIT. The machine meshes are Kenney Car Kit, CC0. Imagery is Sentinel-2 cloudless by EOX, CC BY 4.0, over Natural Earth II.</p>
+      <p>Between the measured tiles the ground is Mapzen terrarium tiles: ETOPO1 (NOAA, public domain), GMTED2010 and SRTM and 3DEP (U.S. Geological Survey), ArcticDEM, CDEM under the Open Government Licence – Canada, and the other open sources named in ATTRIBUTION. Oceans are held at sea level.</p>
+      <p>The globe is CesiumJS, Apache-2.0. Vehicles use cannon-es, MIT. The machine meshes are Kenney Car Kit, CC0. The engine tone is synthesized here. Imagery is Sentinel-2 cloudless by EOX, CC BY 4.0, over Natural Earth II.</p>
     </dialog>
   `;
 }

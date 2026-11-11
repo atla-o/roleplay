@@ -20,6 +20,10 @@ npm run preview
 
 `npm run typecheck` is included in the build. The baked rasters in `public/data/` are already committed, so the site does not need Python or GDAL at build time.
 
+Open `?capture=1` to hide the header, panels, minimap, and prompts for a clean frame. C shows or hides the small title card. There is no scripted tour.
+
+You start beside the mass mover on the Polar Desert Basin. Hold E to get in, drive with WASD or a gamepad's left stick, and lower the blade with F or the right trigger. The first job is a 40 m pad. Fuel is in the header. Let off the throttle beside the fuel stake to refill. X puts the machine back on its tracks at the depot. Reset site restores that ground and its jobs.
+
 ## Bake
 
 `tools/bake/bake.py` rebuilds the Polar Desert Basin rasters from ArcticDEM v4.1 and the NRCan National Hydro Network. `tools/bake/ile.py` rebuilds the Île René-Levasseur window from the NRCan HRDEM mosaic, MRDEM-30, 2020 land cover, and a GBIF occurrence seed. See `tools/bake/README.md` and `ATTRIBUTION.md`.

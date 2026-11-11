@@ -18,6 +18,9 @@ export class Detail {
   originE = 0;
   originN = 0;
   ready = false;
+  /** Soil held in the blade, in m³. It fills lows ahead of the cut and spills to the right past the cap. */
+  carry = 0;
+  private readonly carryMax = 80;
   private sweptE = Number.NaN;
   private sweptN = Number.NaN;
 
@@ -28,6 +31,36 @@ export class Detail {
     let sum = 0;
     for (let i = 0; i < this.heights.length; i++) sum += (this.heights[i] ?? 0) - (this.base[i] ?? 0);
     return sum;
+  }
+
+  writeCell(east: number, north: number, h: number): void {
+    if (!this.ready) return;
+    const c = Math.floor(east - this.originE);
+    const r = Math.floor(north - this.originN);
+    if (c < 0 || r < 0 || c >= SIZE || r >= SIZE) return;
+    const i = r * SIZE + c;
+    if (Math.abs((this.heights[i] ?? 0) - h) < 0.01) return;
+    this.heights[i] = h;
+    this.mark(i);
+  }
+
+  /** Put a saved 1 m window back onto this one. Cells that fall outside stay where the coarse field left them. */
+  stamp(saved: { originE: number; originN: number; cells: { i: number; h: number }[] }): void {
+    if (!this.ready) return;
+    for (const cell of saved.cells) {
+      const c = cell.i % SIZE;
+      const r = (cell.i / SIZE) | 0;
+      this.writeCell(saved.originE + c + 0.5, saved.originN + r + 0.5, cell.h);
+    }
+  }
+
+  /** The 1 m cell that contains this point. Job checks use this so a windrow beside the work does not sway the result. */
+  cell(east: number, north: number): number | null {
+    if (!this.ready) return null;
+    const c = Math.floor(east - this.originE);
+    const r = Math.floor(north - this.originN);
+    if (c < 0 || r < 0 || c >= SIZE || r >= SIZE) return null;
+    return this.heights[r * SIZE + c] ?? null;
   }
 
   sample(east: number, north: number): number | null {
@@ -47,7 +80,7 @@ export class Detail {
     return (h00 * (1 - tx) + h10 * tx) * (1 - ty) + (h01 * (1 - tx) + h11 * tx) * ty;
   }
 
-  grade(east: number, north: number): number | null {
+  originalAt(east: number, north: number): number | null {
     if (!this.ready) return null;
     const c = Math.floor(east - this.originE);
     const r = Math.floor(north - this.originN);
@@ -116,6 +149,82 @@ export class Detail {
     this.sweptE = east;
     this.sweptN = north;
     return moved;
+  }
+
+  /**
+   * Move soil in the bite toward one elevation. Cuttings stay in the blade and fill
+   * lows further along the pass. Past the carry cap, the rest spills to the right.
+   */
+  grade(east: number, north: number, heading: number, width: number, edge: number): number {
+    if (!this.ready) return 0;
+    if (Number.isFinite(this.sweptE) && Math.hypot(east - this.sweptE, north - this.sweptN) < 0.25) return 0;
+    const fx = Math.sin(heading);
+    const fn = Math.cos(heading);
+    const half = Math.max(width / 2, 0.6);
+    const under = this.cells(east, north, 0.8, half, fx, fn);
+    let cut = 0;
+    const lows: number[] = [];
+    for (const i of under) {
+      const h = this.heights[i] ?? 0;
+      if (h > edge + 0.02) {
+        const dh = Math.min(h - edge, 0.45);
+        this.heights[i] = h - dh;
+        cut += dh;
+        this.mark(i);
+      } else if (h < edge - 0.02) lows.push(i);
+    }
+    this.carry += cut;
+    let filled = 0;
+    for (const i of lows) {
+      if (this.carry <= 0.001) break;
+      const room = edge - (this.heights[i] ?? 0);
+      const dh = Math.min(room, this.carry);
+      this.heights[i] = (this.heights[i] ?? 0) + dh;
+      this.carry -= dh;
+      filled += dh;
+      this.mark(i);
+    }
+    let spilled = 0;
+    if (this.carry > this.carryMax) {
+      spilled = this.carry - this.carryMax;
+      this.carry = this.carryMax;
+      const skip = new Set(under);
+      const bank = this.cells(east + fn * (half + 1.6), north - fx * (half + 1.6), 0.9, 1.1, fx, fn).filter((i) => !skip.has(i));
+      const pile = bank.length ? bank : under;
+      const lift = spilled / pile.length;
+      for (const i of pile) {
+        this.heights[i] = (this.heights[i] ?? 0) + lift;
+        this.mark(i);
+      }
+    }
+    if (cut <= 0 && filled <= 0 && spilled <= 0) return 0;
+    this.field.cutM3 += cut;
+    this.field.fillM3 += filled + spilled;
+    this.sweptE = east;
+    this.sweptN = north;
+    return cut;
+  }
+
+  dropCarry(): void {
+    if (Number.isFinite(this.sweptE)) this.release(this.sweptE, this.sweptN);
+  }
+
+  /** Drop blade load on the ground. A raised blade calls this to leave a berm. */
+  release(east: number, north: number, amount = Number.POSITIVE_INFINITY): number {
+    if (!this.ready || this.carry <= 0.001) return 0;
+    const drop = Math.min(this.carry, amount);
+    const c = Math.floor(east - this.originE);
+    const r = Math.floor(north - this.originN);
+    if (c < 1 || r < 1 || c >= SIZE - 1 || r >= SIZE - 1) return 0;
+    const shares = [0.2, 0.6, 0.2];
+    for (let k = 0; k < shares.length; k++) {
+      const i = r * SIZE + (c - 1 + k);
+      this.heights[i] = (this.heights[i] ?? 0) + drop * shares[k]!;
+      this.mark(i);
+    }
+    this.carry -= drop;
+    this.field.fillM3 += drop;
+    return drop;
   }
 
   bakeAll(): void {

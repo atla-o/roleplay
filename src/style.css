@@ -142,7 +142,25 @@ canvas { display: block; }
   padding: 8px 12px 10px;
 }
 .coach p { margin: 0; font-size: 13px; line-height: 1.35; }
-#coach { z-index: 4; }
+#coach, #guide { z-index: 4; }
+.job { position: relative; display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 6px 12px; font-size: 12px; }
+.job i { position: absolute; left: 12px; right: 12px; bottom: 2px; height: 2px; width: 0; background: var(--silver); }
+.job em { color: var(--muted); font-style: normal; }
+.job.done em { color: var(--good); }
+#job-banner {
+  position: absolute; z-index: 4; left: 50%; top: 22%; transform: translateX(-50%);
+  background: var(--panel); border: 1px solid var(--line); padding: 16px 22px; min-width: 280px;
+}
+#job-banner h2 { margin: 0 0 6px; font-size: 22px; font-weight: 560; }
+#capture-title {
+  position: absolute; z-index: 4; left: 28px; bottom: 28px;
+  background: rgba(14, 16, 18, 0.72); padding: 10px 14px;
+}
+#capture-title p { margin: 0; letter-spacing: 0.16em; font-size: 11px; color: var(--muted); }
+#capture-title strong { font-size: 22px; font-weight: 560; }
+html.capture .top, html.capture .rail, html.capture .inspector, html.capture #minimap,
+html.capture #coach, html.capture #guide, html.capture #job-banner, html.capture #cesium-credit { display: none !important; }
+html.capture, html.capture * { cursor: none !important; }
 #coach-how { color: var(--muted); margin-top: 2px; }
 .coach .tool { width: auto; display: inline-block; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--line); }
 button:disabled { opacity: 0.45; cursor: default; }

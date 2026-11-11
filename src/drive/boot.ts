@@ -9,6 +9,7 @@ import { Detail } from './detail';
 import { Relief } from './dem';
 import { COACH, Dust, Engine } from './feel';
 import { FineLayer } from './fine';
+import { BASIN_DEPOT, FUEL_MAX, Play, applyEdits, fineOf, jobRows, loadSave, writeSave, type FineSave } from './play';
 import { Director, drawMinimap, type ViewId } from './views';
 
 interface Patch {
@@ -50,6 +51,11 @@ const POSTS = 121;
 
 export async function startWorld(root: HTMLElement): Promise<void> {
   root.insertAdjacentHTML('beforeend', markup());
+  const captureHide = new URLSearchParams(location.search).get('capture') === '1';
+  if (captureHide) {
+    document.documentElement.classList.add('capture');
+    root.querySelector('#capture-title')?.removeAttribute('hidden');
+  }
   const host = document.createElement('div');
   host.id = 'cesium';
   root.prepend(host);
@@ -104,6 +110,26 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   const basin = await loadBasin(base);
   const ring = await loadRing(base);
   const places = [basin, ring];
+  const saved = loadSave();
+  if (saved) {
+    applyEdits(basin.ground.field, saved.edits['polar-desert-basin']);
+    applyEdits(ring.ground.field, saved.edits['rene-levasseur']);
+    basin.yard.pullHeights();
+    ring.yard.pullHeights();
+  }
+  const play = new Play(basin.ground.field);
+  play.restore(saved);
+  const fineBook: Record<string, FineSave> = { ...(saved?.fine ?? {}) };
+  const persist = () => {
+    if (detail && detailPlace) {
+      const shot = fineOf(detail);
+      if (shot) fineBook[detailPlace.id] = shot;
+      else delete fineBook[detailPlace.id];
+    }
+    writeSave(play.snapshot(basin.ground.field, ring.ground.field, fineBook));
+  };
+  basin.yard.datum = basin.ground.field.sample(BASIN_DEPOT.e, BASIN_DEPOT.n);
+  ring.yard.datum = ring.ground.field.sample(2000, 2200);
   for (const place of places) {
     mount(viewer, place.ground);
     if (place.context) mount(viewer, place.context);
@@ -140,6 +166,7 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   const keys = new Set<string>();
   const input: DriveInput = { throttle: 0, steer: 0, brake: false, raise: false, lower: false, dig: false, dump: false };
   let waterAt = 0;
+  let savedAt = 0;
   let sculptIdle = 0;
   let eHeld = 0;
   let eFired = false;
@@ -195,9 +222,15 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   const closeDetail = () => {
     if (!detail || !detailPlace) return;
     const place = detailPlace;
+    const shot = fineOf(detail);
+    if (shot) fineBook[place.id] = shot;
+    else delete fineBook[place.id];
+    detail.dropCarry();
     detail.bakeAll();
     fine?.destroy();
     place.yard.sculpt = null;
+    place.yard.bladeLoad = null;
+    place.yard.unload = null;
     place.yard.surface = (east, north) => place.ground.field.sample(east, north);
     detail = null;
     fine = null;
@@ -215,12 +248,24 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       fine.destroy();
       fine = null;
     }
+    const originE = detail.originE;
+    const originN = detail.originN;
+    const wasReady = detail.ready;
+    const leaving = wasReady && (
+      east < detail.originE + 48 || east > detail.originE + detail.size - 48 ||
+      north < detail.originN + 48 || north > detail.originN + detail.size - 48
+    );
+    if (leaving) play.remember(place.id, detail);
     detail.follow(east, north);
+    if (!wasReady && fineBook[place.id]) detail.stamp(fineBook[place.id]);
+    if (!wasReady || detail.originE !== originE || detail.originN !== originN) play.paintMemory(place.id, detail);
     place.yard.surface = (sampleE, sampleN) => detail?.sample(sampleE, sampleN) ?? place.ground.field.sample(sampleE, sampleN);
-    place.yard.sculpt = (sampleE, sampleN, heading, width, depth) => detail?.cut(sampleE, sampleN, heading, width, depth) ?? 0;
+    place.yard.sculpt = (sampleE, sampleN, heading, width, edge) => detail?.grade(sampleE, sampleN, heading, width, edge) ?? 0;
+    place.yard.bladeLoad = () => detail?.carry ?? 0;
+    place.yard.unload = (sampleE, sampleN) => { detail?.release(sampleE, sampleN); };
   };
   const showCoach = (view: ViewId) => {
-    if (coached === view) return;
+    if (play.guide < 3 || play.bannerOn() || coached === view) return;
     coached = view;
     let seen = false;
     try {
@@ -325,7 +370,18 @@ export async function startWorld(root: HTMLElement): Promise<void> {
 
   paintList();
   showView();
-  director.step(0, groundAt, null);
+  play.mount(viewer, basin.ground, ring.ground, basin.yard.datum, (east, north) => ring.ground.field.sample(east, north));
+  const parked = basin.yard.rigs[0];
+  if (parked) {
+    const geo = rigGeo(basin, parked);
+    director.anchor.lon = geo.lon;
+    director.anchor.lat = geo.lat;
+    director.anchor.heading = 0;
+    director.anchor.pitch = -0.25;
+  }
+  director.jump('vehicle');
+  director.step(0.016, groundAt, null);
+  showView();
 
   const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
   handler.setInputAction((event: { position: Cesium.Cartesian2 }) => {
@@ -336,7 +392,7 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
   root.querySelector('#drive-enter')?.addEventListener('click', () => {
-    if (director.view === 'vehicle') leave();
+    if (active) leave();
     else {
       const rig = focus.yard.rigs.find((item) => item.kind === chosen) ?? focus.yard.rigs[0];
       if (rig) enter(rig);
@@ -350,10 +406,15 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     status.textContent = 'Rain moved sediment downhill. The soil stayed in the field.';
   });
   root.querySelector('#drive-reset')?.addEventListener('click', () => {
+    closeDetail();
     focus.ground.field.reset();
+    focus.yard.pullHeights();
     for (const rig of focus.yard.rigs) rig.loadM3 = 0;
+    delete fineBook[focus.id];
+    play.reset(focus.id);
     settleWater(focus);
-    status.textContent = 'Measured surface restored. Banked soil is back in the ground.';
+    persist();
+    status.textContent = 'This site is back to the measured ground. Jobs and fuel were reset here.';
   });
   root.querySelector('#open-credits')?.addEventListener('click', () => root.querySelector<HTMLDialogElement>('#credits')?.showModal());
   root.querySelector('#open-settings')?.addEventListener('click', () => root.querySelector<HTMLDialogElement>('#settings')?.showModal());
@@ -420,6 +481,13 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   }, { passive: false });
   window.addEventListener('keydown', (ev) => {
     keys.add(ev.key.toLowerCase());
+    if (captureHide && ev.key.toLowerCase() === 'c') {
+      root.querySelector('#capture-title')?.toggleAttribute('hidden');
+    }
+    if (ev.key.toLowerCase() === 'x' && active) {
+      const depot = focus.id === 'rene-levasseur' ? { e: 2000, n: 2200 } : BASIN_DEPOT;
+      focus.yard.recover(active, depot.e, depot.n);
+    }
     if (ev.key === '1') chooseView('orbit');
     if (ev.key === '2') chooseView('titan');
     if (ev.key === '3') chooseView('vehicle');
@@ -457,9 +525,9 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     readInput();
     if (keys.has('e')) {
       eHeld += dt;
-      if (!eFired && eHeld > 0.4) {
+      if (!eFired && eHeld > 0.2) {
         eFired = true;
-        if (director.view === 'vehicle') leave();
+        if (active) leave();
         else {
           const rig = focus.yard.rigs.find((item) => item.kind === chosen) ?? focus.yard.rigs[0];
           if (rig) enter(rig);
@@ -479,8 +547,18 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     }
     const driving = director.view === 'vehicle' && active && focus.yard.rigs.includes(active) ? active : null;
     const cutBefore = focus.ground.field.cutM3;
+    const tank = focus.id === 'rene-levasseur' ? 'ring' : 'basin';
+    const depot = focus.id === 'rene-levasseur' ? { e: 2000, n: 2200 } : BASIN_DEPOT;
     if (driving) {
       const pose = focus.yard.pose(driving);
+      const home = Math.hypot(pose.east - depot.e, pose.north - depot.n);
+      const parked = home < 12 && Math.abs(input.throttle) < 0.2;
+      if (parked) play.fuel[tank] = Math.min(FUEL_MAX, play.fuel[tank] + dt * 50);
+      else play.fuel[tank] = Math.max(0, play.fuel[tank] - dt * (0.15 + Math.abs(input.throttle) * 0.9 + (driving.bladeAngle < -0.05 ? 0.55 : 0)));
+      if (play.fuel[tank] <= 0) input.throttle = 0;
+      if (play.guide === 0) play.guide = 1;
+      if (play.guide === 1 && Math.hypot(pose.east - BASIN_DEPOT.e, pose.north - BASIN_DEPOT.n) > 3) play.guide = 2;
+      if (play.guide === 2 && driving.bladeAngle < -0.12) play.guide = 3;
       openDetail(focus, pose.east, pose.north);
       focus.yard.step(dt, driving, input);
       if (quality !== 'low') fine?.flush(director.blending ? 4 : 1);
@@ -488,7 +566,9 @@ export async function startWorld(root: HTMLElement): Promise<void> {
         const at = offsetDegrees(focus.ground.south, focus.ground.west, pose.east + Math.sin(pose.heading) * 4, pose.north + Math.cos(pose.heading) * 4);
         dust.puff(at.lon, at.lat, pose.up + 0.6);
       }
-    } else if (detail) closeDetail();
+    }
+    if (detail && detailPlace && detailPlace !== focus) closeDetail();
+    if (detail && quality !== 'low') fine?.flush(1);
     const working = Boolean(driving) && (input.lower || input.raise || input.dig || input.dump || Math.abs(input.throttle) > 0.2);
     sculptIdle = working ? 0 : sculptIdle + dt;
     input.raise = false;
@@ -540,11 +620,27 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       const north = offsetDegrees(place.ground.south, place.ground.west, 0, place.ground.heightM).lat;
       return { west: place.ground.west - 0.12, south: place.ground.south - 0.08, east: east + 0.12, north: north + 0.08 };
     }));
+    const done = play.tick(
+      focus.id,
+      dt,
+      (east, north) => (detail && detailPlace === focus ? detail.cell(east, north) ?? focus.ground.field.sample(east, north) : focus.ground.field.sample(east, north)),
+      (east, north) => focus.ground.field.sampleBase(east, north),
+      driving ? { e: focus.yard.pose(driving).east, n: focus.yard.pose(driving).north } : null,
+      focus.ground.field.cutM3,
+      play.fuel[tank],
+    );
+    if (done) persist();
+    if (now - savedAt > 5000) {
+      savedAt = now;
+      persist();
+    }
     engine.throttle(driving ? Math.abs(input.throttle) : 0);
     dust.step(elapsed);
     showCoach(director.view);
     poseModels(drawn);
     paint(focus);
+    paintGuide();
+    paintJobs(focus.id);
     drawMinimap(
       map,
       director.anchor,
@@ -565,7 +661,7 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
-  status.textContent = 'One ground. Fly in from orbit, then drive. The blade pushes soil. The bucket holds it until you dump.';
+  status.textContent = 'The mass mover is in front of you. Hold E to get in.';
 
   window.__roleplay = {
     ready: true,
@@ -588,6 +684,63 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     held: () => [...keys],
     ground: (lon: number, lat: number) => groundAt(lon, lat),
     detail: () => (detail ? detail.deltaM3() : null),
+    state: () => {
+      const rig = active ?? focus.yard.rigs[0];
+      const pose = rig ? focus.yard.pose(rig) : null;
+      return {
+        guide: play.guide,
+        banner: play.banner,
+        bannerOn: play.bannerOn(),
+        fuel: play.fuel,
+        site: focus.id,
+        blade: rig?.bladeAngle ?? null,
+        seated: director.view === 'vehicle' && Boolean(active),
+        pose,
+        cam: viewer.camera.positionCartographic.height,
+        basin: jobRows('polar-desert-basin', play).map((row) => ({ id: row.id, done: row.stat.done, progress: row.stat.progress })),
+        ring: jobRows('rene-levasseur', play).map((row) => ({ id: row.id, done: row.stat.done, progress: row.stat.progress })),
+      };
+    },
+    place: (east: number, north: number) => {
+      const rig = focus.yard.rigs.find((item) => item.kind === 'dozer') ?? focus.yard.rigs[0];
+      if (!rig) return;
+      focus.yard.recover(rig, east, north);
+      enter(rig);
+    },
+    grade: (east: number, north: number, heading: number, width: number, edge: number) => {
+      openDetail(focus, east, north);
+      return detail?.grade(east, north, heading, width, edge) ?? 0;
+    },
+    drop: (east: number, north: number, amount?: number) => {
+      openDetail(focus, east, north);
+      return detail?.release(east, north, amount) ?? 0;
+    },
+    carry: () => detail?.carry ?? 0,
+    clearCarry: () => { if (detail) detail.carry = 0; },
+    setGuide: (step: number) => { play.guide = step; },
+    checkSurvey: (east: number, north: number) => play.checkSurvey(east, north),
+    blade: (angle: number) => {
+      const rig = active ?? focus.yard.rigs[0];
+      if (rig) rig.bladeAngle = angle;
+    },
+    padMisses: () => {
+      const misses: string[] = [];
+      if (!detail) return misses;
+      for (let y = 0; y < 40; y++) {
+        for (let x = 0; x < 40; x++) {
+          const h = detail.cell(1660 + x + 0.5, 2060 + y + 0.5);
+          if (h == null) {
+            misses.push(`${x},${y}:out`);
+            continue;
+          }
+          const d = h - play.padTarget;
+          if (Math.abs(d) > 0.3) misses.push(`${x},${y}:${d.toFixed(2)}`);
+        }
+      }
+      return misses;
+    },
+    padTarget: () => play.padTarget,
+    sample: (east: number, north: number) => focus.ground.field.sampleBase(east, north),
     seat: () => {
       const rig = active ?? focus.yard.rigs[0];
       if (!rig) return null;
@@ -606,17 +759,24 @@ export async function startWorld(root: HTMLElement): Promise<void> {
 
   function readInput() {
     const pad = navigator.getGamepads?.()[0];
-    const axis = pad ? pad.axes[0] || 0 : 0;
-    const driving = director.view === 'vehicle';
-    const accel = driving && (pad?.buttons[7]?.pressed || keys.has('w') || keys.has('arrowup'));
-    const back = driving && (pad?.buttons[6]?.pressed || keys.has('s') || keys.has('arrowdown'));
-    input.throttle = accel ? 1 : back ? -0.55 : 0;
-    input.steer = driving ? axis : 0;
+    const driving = director.view === 'vehicle' && Boolean(active);
+    const stickX = pad && Math.abs(pad.axes[0] || 0) > 0.12 ? pad.axes[0] || 0 : 0;
+    const stickY = pad && Math.abs(pad.axes[1] || 0) > 0.12 ? pad.axes[1] || 0 : 0;
+    const trigger = (index: number, axis: number) => {
+      const button = pad?.buttons[index];
+      if (button && (button.pressed || button.value > 0.4)) return true;
+      const analog = pad?.axes[axis] ?? 0;
+      return analog > 0.4;
+    };
+    const accel = driving && (keys.has('w') || keys.has('arrowup') || stickY < 0);
+    const back = driving && (keys.has('s') || keys.has('arrowdown') || stickY > 0);
+    input.throttle = accel ? Math.max(0.45, -stickY || 1) : back ? -0.55 : 0;
+    input.steer = driving ? stickX : 0;
     if (driving && (keys.has('a') || keys.has('arrowleft'))) input.steer -= 0.85;
     if (driving && (keys.has('d') || keys.has('arrowright'))) input.steer += 0.85;
     input.brake = driving && keys.has(' ');
-    input.raise = driving && (keys.has('r') || Boolean(pad?.buttons[5]?.pressed));
-    input.lower = driving && (keys.has('f') || Boolean(pad?.buttons[4]?.pressed));
+    input.raise = driving && (keys.has('r') || trigger(6, 4));
+    input.lower = driving && (keys.has('f') || trigger(7, 5));
     input.dig = driving && keys.has('g');
     input.dump = driving && keys.has('t');
   }
@@ -627,13 +787,39 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     if (rig) {
       const pose = place.yard.pose(rig);
       const grade = place.yard.grade(rig);
-      const depth = place.yard.bladeDepth(rig);
-      root.querySelector('#drive-read')!.textContent = `${rig.label}  ${pose.speed.toFixed(0)} km/h  grade ${grade.toFixed(0)}°  blade ${((rig.bladeAngle * 180) / Math.PI).toFixed(0)}°  depth ${depth.toFixed(2)} m`;
+      const edge = place.yard.datum + Math.sin(rig.bladeAngle) * 2.4;
+      root.querySelector('#drive-read')!.textContent = `${rig.label}  ${pose.speed.toFixed(0)} km/h  grade ${grade.toFixed(0)}°  blade ${((rig.bladeAngle * 180) / Math.PI).toFixed(0)}°  edge ${edge.toFixed(2)} m`;
     } else {
       root.querySelector('#drive-read')!.textContent = `${names[director.view]} · ${place.name}`;
     }
-    root.querySelector('#drive-volumes')!.textContent = `Moved ${Math.round(place.ground.field.cutM3).toLocaleString('en-US')} m³   Fill ${Math.round(place.ground.field.fillM3).toLocaleString('en-US')} m³   In machines ${place.yard.held().toFixed(1)} m³`;
+    const tank = place.id === 'rene-levasseur' ? play.fuel.ring : play.fuel.basin;
+    root.querySelector('#drive-volumes')!.textContent = `Moved ${Math.round(place.ground.field.cutM3).toLocaleString('en-US')} m³   Fill ${Math.round(place.ground.field.fillM3).toLocaleString('en-US')} m³   Fuel ${tank.toFixed(0)}`;
     root.querySelector('#drive-note')!.textContent = place.note;
+  }
+
+  function paintGuide() {
+    const card = root.querySelector<HTMLElement>('#guide');
+    const text = root.querySelector('#guide-step');
+    if (!card || !text) return;
+    const note = play.guideText();
+    card.hidden = note.length === 0;
+    text.textContent = note;
+  }
+
+  function paintJobs(site: string) {
+    const host = root.querySelector('#job-list');
+    const banner = root.querySelector<HTMLElement>('#job-banner');
+    const stats = root.querySelector('#job-banner-stats');
+    if (host) {
+      host.innerHTML = jobRows(site, play).map((row) => {
+        const pct = Math.round(row.stat.progress * 100);
+        return `<div class="job${row.stat.done ? ' done' : ''}"><span>${row.title}</span><i style="width:${pct}%"></i><em>${row.stat.done ? 'done' : `${pct}%`}</em></div>`;
+      }).join('');
+    }
+    if (banner && stats) {
+      banner.hidden = !play.bannerOn();
+      stats.textContent = play.banner;
+    }
   }
 }
 
@@ -687,6 +873,13 @@ function poseModels(drawn: { place: Place; rig: Rig; model: Cesium.Model }[]): v
     // The glTF faces +Z. Cesium lays that axis east at heading 0, so turn it onto the chassis heading.
     const rotation = Cesium.Transforms.headingPitchRollQuaternion(position, new Cesium.HeadingPitchRoll(pose.heading - Math.PI / 2, 0, 0));
     model.modelMatrix = Cesium.Matrix4.fromTranslationQuaternionRotationScale(position, rotation, new Cesium.Cartesian3(4.2, 4.2, 4.2));
+    if (model.ready && rig.kind === 'dozer') {
+      const shovel = model.getNode('shovel');
+      if (shovel) {
+        const tilt = Cesium.Matrix4.fromRotationTranslation(Cesium.Matrix3.fromRotationX(-rig.bladeAngle * 1.35));
+        shovel.matrix = Cesium.Matrix4.multiply(shovel.originalMatrix, tilt, new Cesium.Matrix4());
+      }
+    }
   }
 }
 
@@ -702,9 +895,9 @@ async function loadBasin(base: string): Promise<Place> {
   const sw = offsetDegrees(meta.center_wgs84.lat, meta.center_wgs84.lon, -widthM / 2, -widthM / 2);
   const field = new Field(POSTS, POSTS, widthM / (POSTS - 1), heights);
   const yard = new Yard(field);
-  yard.spawn('dozer', widthM * 0.42, widthM * 0.48);
-  yard.spawn('excavator', widthM * 0.42 + 45, widthM * 0.48 + 20);
-  yard.spawn('hauler', widthM * 0.42 + 16, widthM * 0.48 - 40);
+  yard.spawn('dozer', BASIN_DEPOT.e, BASIN_DEPOT.n);
+  yard.spawn('excavator', BASIN_DEPOT.e + 16, BASIN_DEPOT.n - 14);
+  yard.spawn('hauler', BASIN_DEPOT.e - 14, BASIN_DEPOT.n - 18);
   yard.rest();
   return {
     id: 'polar-desert-basin',
@@ -832,9 +1025,11 @@ function markup(): string {
       <div class="group">Sites</div>
       <div id="site-list"></div>
       <div class="group">Machines</div>
-      <p class="peers">Hold E to enter or leave a machine. WASD or a gamepad drives. R raises the blade, F lowers it. G digs. T dumps. Shift is a longer Titan stride.</p>
+      <p class="peers">Hold E to enter or leave. WASD or the left stick drives. R raises the blade, F or the right trigger lowers it. X sets the machine upright at the fuel depot.</p>
+      <div class="group">Jobs</div>
+      <div id="job-list"></div>
       <button id="drive-rain" class="tool" type="button">Rain on this ground</button>
-      <button id="drive-reset" class="tool" type="button">Reset to measured</button>
+      <button id="drive-reset" class="tool" type="button">Reset site</button>
     </aside>
     <aside class="inspector">
       <div class="views" role="group" aria-label="View">
@@ -860,6 +1055,9 @@ function markup(): string {
       </div>
     </aside>
     <canvas id="minimap" class="minimap" width="168" height="168"></canvas>
+    <div id="guide" class="coach"><p id="guide-step"></p></div>
+    <div id="job-banner" hidden><h2>Job complete</h2><p id="job-banner-stats"></p></div>
+    <div id="capture-title" hidden><p>Roleplay</p><strong>Polar Desert Basin</strong></div>
     <div id="coach" class="coach" hidden>
       <p id="coach-text"></p>
       <button id="coach-ok" class="tool" type="button">Got it</button>

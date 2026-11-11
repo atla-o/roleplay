@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "check": "tsx scripts/sim-check.ts && tsx scripts/detail-check.ts",
+    "check": "tsx scripts/sim-check.ts && tsx scripts/detail-check.ts && tsx scripts/play-check.ts",
     "verify": "node scripts/verify.mjs"
   },
   "dependencies": {

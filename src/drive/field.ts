@@ -54,6 +54,10 @@ export class Field {
   }
 
   sample(east: number, north: number): number {
+    return this.bilinear(this.heights, east, north);
+  }
+
+  private bilinear(grid: Float32Array, east: number, north: number): number {
     const x = east / this.spacing;
     const y = north / this.spacing;
     const x0 = Math.floor(x);
@@ -61,16 +65,21 @@ export class Field {
     if (x0 < 0 || y0 < 0 || x0 >= this.cols - 1 || y0 >= this.rows - 1) {
       const c = Math.max(0, Math.min(this.cols - 1, Math.round(x)));
       const r = Math.max(0, Math.min(this.rows - 1, Math.round(y)));
-      return this.heights[this.index(c, r)] ?? 0;
+      return grid[this.index(c, r)] ?? 0;
     }
     const tx = x - x0;
     const ty = y - y0;
     const i00 = this.index(x0, y0);
-    const h00 = this.heights[i00] ?? 0;
-    const h10 = this.heights[i00 + 1] ?? h00;
-    const h01 = this.heights[i00 + this.cols] ?? h00;
-    const h11 = this.heights[i00 + this.cols + 1] ?? h00;
+    const h00 = grid[i00] ?? 0;
+    const h10 = grid[i00 + 1] ?? h00;
+    const h01 = grid[i00 + this.cols] ?? h00;
+    const h11 = grid[i00 + this.cols + 1] ?? h00;
     return (h00 * (1 - tx) + h10 * tx) * (1 - ty) + (h01 * (1 - tx) + h11 * tx) * ty;
+  }
+
+  /** The measured surface, before any cut or fill. */
+  sampleBase(east: number, north: number): number {
+    return this.bilinear(this.base, east, north);
   }
 
   range(): { min: number; max: number } {

@@ -87,6 +87,16 @@ export class Director {
     return { blend: this.blend, shot: this.applied.height, from: this.from.height };
   }
 
+  /** Place a view immediately. Used so the opening shot is the machine, not a long blend. */
+  jump(next: ViewId): void {
+    this.view = next;
+    this.blend = 1;
+    this.chaseYaw = 0;
+    this.chasePitch = 0;
+    this.snap = true;
+    this.arc = 0;
+  }
+
   setView(next: ViewId, arc = 0): void {
     if (next === this.view && this.blend >= 1 && arc === 0) return;
     this.from = { ...this.applied };
@@ -174,8 +184,8 @@ export class Director {
     const floor = groundAt(pose.lon, pose.lat);
     const base = Math.max(floor + 1.15, Math.min(floor + 3.2, pose.up));
     const yaw = pose.heading + this.chaseYaw;
-    const back = 12;
-    const above = 4 + this.chasePitch * 2;
+    const back = 22;
+    const above = 7.5 + this.chasePitch * 2;
     const wantE = -Math.sin(yaw) * back;
     const wantN = -Math.cos(yaw) * back;
     if (this.snap) {
@@ -205,8 +215,10 @@ export class Director {
     }
     let camU = lookU + (base + this.camU - lookU) * pulled;
     const at = offsetDegrees(pose.lat, pose.lon, camE, camN);
+    const mid = offsetDegrees(pose.lat, pose.lon, camE * 0.5, camN * 0.5);
     const camGround = groundAt(at.lon, at.lat);
-    const height = Math.max(camGround + 2.4, camU);
+    const midGround = groundAt(mid.lon, mid.lat);
+    const height = Math.max(camGround + 2.4, midGround + 1.6, camU);
     const dE = lookE - camE;
     const dN = lookN - camN;
     const dU = lookU - height;

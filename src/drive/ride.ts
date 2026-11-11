@@ -23,6 +23,8 @@ export interface Rig {
   /** Radians. Positive lifts the blade. Negative puts the edge into the grade. */
   bladeAngle: number;
   applied: number;
+  /** 1 is free, lower means the blade is in the ground. */
+  loadDrag: number;
 }
 
 const SPECS: Record<RigKind, { mass: number; force: number; length: number; width: number; tracked: boolean; maxKmh: number; mesh: string; label: string }> = {
@@ -39,8 +41,14 @@ export class Yard {
   private accumulator = 0;
   /** Ground the wheels stand on. The fine edit layer replaces the coarse posts while it is open. */
   surface: (east: number, north: number) => number = (east, north) => this.field.sample(east, north);
-  /** Machine-scale cut. When set, the blade does not edit the coarse posts directly. */
-  sculpt: ((east: number, north: number, heading: number, width: number, depth: number) => number) | null = null;
+  /** Elevation the dozer's blade holds, set from the spawn datum and the blade angle. */
+  datum = 0;
+  /** Machine-scale cut. The last argument is the blade's elevation in metres. */
+  sculpt: ((east: number, north: number, heading: number, width: number, edge: number) => number) | null = null;
+  /** Soil the blade is holding, in m³. Used to drag the machine when the blade is full. */
+  bladeLoad: (() => number) | null = null;
+  /** Called when the blade is up so a pushed load can be left as a pile. */
+  unload: ((east: number, north: number) => void) | null = null;
 
   constructor(readonly field: Field) {
     this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
@@ -105,7 +113,7 @@ export class Yard {
       });
     }
     vehicle.addToWorld(this.world);
-    const rig: Rig = { kind, label: spec.label, mesh: spec.mesh, vehicle, loadM3: 0, bladeAngle: 0.08, applied: 0 };
+    const rig: Rig = { kind, label: spec.label, mesh: spec.mesh, vehicle, loadM3: 0, bladeAngle: 0.45, applied: 0, loadDrag: 1 };
     this.rigs.push(rig);
     return rig;
   }
@@ -161,7 +169,7 @@ export class Yard {
       let grip = 1;
       if (climbing > 30) grip = Math.max(0.08, 1 - (climbing - 30) / 8);
       if (climbing > 36) grip = 0.04;
-      const target = drive ? input.throttle * spec.force * grip : 0;
+      const target = drive ? input.throttle * spec.force * grip * rig.loadDrag : 0;
       const limited = Math.abs(pose.speed) > spec.maxKmh && input.throttle > 0 ? 0 : target;
       rig.applied += (limited - rig.applied) * (1 - Math.exp(-dt / 0.35));
       const steer = drive ? Math.max(-1, Math.min(1, input.steer)) : 0;
@@ -234,10 +242,12 @@ export class Yard {
   private work(rig: Rig, input: DriveInput, dt: number, pose: ReturnType<Yard['pose']>, spec: (typeof SPECS)[RigKind]): void {
     if (input.raise) rig.bladeAngle = Math.min(0.6, rig.bladeAngle + dt * 1.4);
     if (input.lower) rig.bladeAngle = Math.max(-0.75, rig.bladeAngle - dt * 1.4);
-    if (rig.kind === 'dozer' && rig.bladeAngle < -0.04 && Math.abs(pose.speed) > 1) {
-      const depth = -Math.sin(rig.bladeAngle) * 1.15;
+    const edge = this.datum + Math.sin(rig.bladeAngle) * 2.4;
+    let moved = 0;
+    if (rig.kind === 'dozer' && rig.bladeAngle < 0.05 && Math.abs(pose.speed) > 1) {
+      const depth = Math.max(0, -Math.sin(rig.bladeAngle) * 1.15);
       if (this.sculpt) {
-        this.sculpt(pose.east + Math.sin(pose.heading) * (spec.length / 2 + 1.2), pose.north + Math.cos(pose.heading) * (spec.length / 2 + 1.2), pose.heading, spec.width, depth);
+        moved = this.sculpt(pose.east + Math.sin(pose.heading) * (spec.length / 2 + 1.2), pose.north + Math.cos(pose.heading) * (spec.length / 2 + 1.2), pose.heading, spec.width, edge);
       } else {
         const reach = spec.length / 2 + this.field.spacing * 0.55;
         const ground = this.field.sample(pose.east + Math.sin(pose.heading) * reach, pose.north + Math.cos(pose.heading) * reach);
@@ -247,6 +257,13 @@ export class Yard {
         }
       }
     }
+    if (rig.kind === 'dozer' && rig.bladeAngle > 0.2 && this.unload) {
+      const reach = spec.length / 2 + 1.2;
+      this.unload(pose.east + Math.sin(pose.heading) * reach, pose.north + Math.cos(pose.heading) * reach);
+    }
+    rig.loadDrag = 1;
+    if (rig.bladeAngle < -0.05) rig.loadDrag *= 0.68;
+    if (moved > 0.02 || (this.bladeLoad?.() ?? 0) > 6) rig.loadDrag *= 0.5;
     if (rig.kind === 'excavator' && input.dig && rig.loadM3 < 24) {
       const dug = digBucket(
         this.field,
@@ -275,6 +292,22 @@ export class Yard {
       for (let y = 0; y < rows; y++) column[y] = this.field.heights[this.field.index(c, rows - 1 - y)] ?? 0;
     }
     this.shape.update();
+  }
+
+  /** Copy the field into the collision heightfield after a saved edit is restored. */
+  pullHeights(): void {
+    this.syncHeights();
+  }
+
+  recover(rig: Rig, east: number, north: number): void {
+    const body = rig.vehicle.chassisBody;
+    const ground = this.surface(east, north);
+    body.position.set(east, ground + 1.6, north);
+    body.velocity.set(0, 0, 0);
+    body.angularVelocity.set(0, 0, 0);
+    const forward = new CANNON.Vec3(0, 0, 1);
+    body.quaternion.vmult(forward, forward);
+    body.quaternion.setFromEuler(0, Math.atan2(forward.x, forward.z), 0);
   }
 }
 

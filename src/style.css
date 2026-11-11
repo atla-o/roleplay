@@ -206,6 +206,15 @@ dialog a { color: var(--ice); }
 .ticks li.on::before { content: ""; position: absolute; left: 0; top: 0.55em; width: 7px; height: 7px; border: 1px solid var(--silver); border-radius: 50%; background: var(--silver); }
 .close { float: right; color: var(--muted); }
 
+.pad { display: flex; flex-wrap: wrap; gap: 6px; }
+.pad button {
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  min-width: 64px;
+  text-align: center;
+  touch-action: none;
+}
+
 @media (max-width: 980px) {
   .top { height: auto; min-height: 52px; flex-wrap: wrap; gap: 8px; padding: 8px 10px; }
   .brand { min-width: 0; }

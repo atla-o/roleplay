@@ -40,6 +40,18 @@ Occurrence points in `public/data/occurrences.json` were retrieved from the [GBI
 
 ## Viewer
 
-The world map uses [CesiumJS](https://cesium.com/cesiumjs/) (Apache-2.0). The basin uses [Three.js](https://threejs.org/) (MIT). Machine rates, permafrost detention, swarm volumes, and the ninety-day growing window are sim parameters. Elevations in the basin are the measured DEM.
+The world is one CesiumJS scene (Apache-2.0). Orbit, the site overview, and the driver camera read the same heightfield. There is no second scene and no reload when the camera flies from orbit to the ground.
+
+Vehicles are a raycast chassis from [cannon-es](https://github.com/pmndrs/cannon-es) 0.20.0 (MIT). The dozer pushes soil ahead of the blade. The excavator holds soil in a bucket. The hauler dumps it. Cut volume, fill volume, and the load in the machines are the same soil.
+
+The machine meshes are Kenney's Car Kit (`tractor-shovel.glb`, `tractor.glb`, `garbage-truck.glb`), [CC0](https://creativecommons.org/publicdomain/zero/1.0/). Credit Kenney, https://kenney.nl/assets/car-kit. No Blender or other GPL program code is included.
+
+[Steel](https://github.com/skild-ai/steel) (Apache-2.0, also in NVIDIA Newton) is a rigid-body solver for batched robot manipulation. Its browser build is WebGPU ([steel-webgpu](https://github.com/skild-ai/steel-webgpu)), not WASM, and it does not sculpt a heightfield. It is not linked into this app.
+
+[TerraForge3D](https://github.com/Jaysmito101/TerraForge3D) (MIT) is a desktop terrain editor. Its erosion filters are C++ and OpenCL tied to that application. They were not copied. The rain control is a short droplet step written here: sediment that is picked up is laid down again.
+
+Three.js (MIT) remains in the repository for the earlier basin viewer. The player-facing world no longer starts that viewer.
+
+Machine rates and the rain step are sim parameters. Elevations start from the measured DEMs.
 
 Roleplay's own code is MIT, copyright Atla LLC, 2026. See `LICENSE`.

@@ -1,6 +1,6 @@
 # Roleplay
 
-Roleplay is the Creation division's world map and measured terrain. The map is a CesiumJS globe (Apache-2.0) split into Tier 1 cold squares, north first: Northern Canada, the United States including North Dakota, Northern Europe, Russia, and Antarctica, plus the Côte-Nord square. Two squares open measured ground. Polar Desert Basin is the 4 × 4 km Arctic surface: ArcticDEM and NHN, cold-method drainage, the ninety-day window, and a 1.7 m walk. Île René-Levasseur is the island in the Manicouagan ring reservoir. On the globe the ring reads as an O. That square is research terrain, not land to reshape: mass movers stay off it, and the crew there is a survey.
+Roleplay is the Creation division's measured world. One CesiumJS globe holds both playable grounds. The camera flies from orbit down onto the same heightfield the driver sees. Polar Desert Basin is the 4 km Arctic surface from ArcticDEM. Île René-Levasseur is the island in the Manicouagan ring, from the NRCan HRDEM mosaic. A mass mover, an excavator, and a hauler drive on that ground. The blade pushes soil, the bucket holds it, and a dump puts it back. Cut and fill are the same earth.
 
 At globe scale the player is a giant. Swarm orders move mass movers, then the bio builder and weather manipulator, then structure builders, across a selected square. Cut and fill on that view are conserved sim parameters. They do not rewrite the measured basin.
 

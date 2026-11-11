@@ -170,8 +170,8 @@ export class Director {
     const floor = groundAt(pose.lon, pose.lat);
     const base = Math.max(floor + 1.15, Math.min(floor + 3.2, pose.up));
     const yaw = pose.heading + this.chaseYaw;
-    const back = 15;
-    const above = 4.6 + this.chasePitch * 3;
+    const back = 16;
+    const above = 3.3 + this.chasePitch * 1.4;
     const wantE = -Math.sin(yaw) * back;
     const wantN = -Math.cos(yaw) * back;
     if (this.snap) {
@@ -187,9 +187,9 @@ export class Director {
       this.camN = damp(this.camN, wantN, this.velN, 0.28, 1 / 60, (v) => { this.velN = v; });
       this.camU = damp(this.camU, above, this.velU, 0.28, 1 / 60, (v) => { this.velU = v; });
     }
-    const lookE = Math.sin(pose.heading) * 16;
-    const lookN = Math.cos(pose.heading) * 16;
-    const lookU = base + 2.2;
+    const lookE = Math.sin(pose.heading) * 11;
+    const lookN = Math.cos(pose.heading) * 11;
+    const lookU = base + 0.05;
     const pulled = this.pullIn(pose, lookE, lookN, lookU, this.camE, this.camN, base + this.camU, groundAt);
     let camE = lookE + (this.camE - lookE) * pulled;
     let camN = lookN + (this.camN - lookN) * pulled;

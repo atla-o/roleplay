@@ -1,6 +1,7 @@
 import * as Cesium from 'cesium';
 import { Relief } from './dem';
 import { Field } from './field';
+import { Dozer } from './dozer';
 import { Drape, projector, type GeoBounds } from './ground';
 import { decodeGrayPng } from '../load/png';
 import { Yard, type Rig } from './ride';
@@ -19,6 +20,9 @@ interface SiteMeta {
   image_bounds: GeoBounds;
   repose_deg: number;
   density_kg_m3: number;
+  forest?: boolean;
+  water_m?: number;
+  spawn_m?: [number, number];
   noon: string;
 }
 
@@ -34,8 +38,10 @@ interface Site {
   project: (east: number, north: number) => { lon: number; lat: number };
   inverse: (lon: number, lat: number) => { east: number; north: number };
   noon: string;
-  model: Cesium.Model;
   bounds: GeoBounds;
+  waterLevel: number | null;
+  spawnE: number;
+  spawnN: number;
 }
 
 const SAVE_KEY = 'roleplay-ground-v2';
@@ -78,8 +84,9 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   viewer.scene.globe.showGroundAtmosphere = true;
   viewer.scene.globe.depthTestAgainstTerrain = true;
   viewer.shadows = true;
-  viewer.shadowMap.darkness = 0.28;
-  viewer.scene.light.intensity = 2.4;
+  viewer.shadowMap.size = 2048;
+  viewer.shadowMap.darkness = 0.42;
+  viewer.scene.light.intensity = 3.5;
   viewer.terrainShadows = Cesium.ShadowMode.RECEIVE_ONLY;
   viewer.resolutionScale = 1;
   viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
@@ -103,10 +110,11 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     return relief.sample(lon, lat) ?? 0;
   };
 
-  const basin = await loadSite(viewer, base, 'data/terrain.json', relief);
-  const ring = await loadSite(viewer, base, 'data/ile/terrain.json', relief);
+  const basin = await loadSite(viewer, base, 'data/terrain.json');
+  const ring = await loadSite(viewer, base, 'data/ile/terrain.json');
   const sites = [basin, ring];
   let focus = basin;
+  const dozer = new Dozer(viewer);
   relief.prefetch(basin.project(2000, 2000).lon, basin.project(2000, 2000).lat);
   relief.prefetch(ring.project(2000, 2000).lon, ring.project(2000, 2000).lat);
 
@@ -170,14 +178,12 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       const next = sites.find((site) => site.id === siteId);
       if (next) {
         focus = next;
-        const midE = ((next.field.cols - 1) * next.field.spacing) / 2;
-        const midN = ((next.field.rows - 1) * next.field.spacing) / 2;
-        next.yard.recover(next.rig, midE, midN);
-        placeBody(next, midE, midN);
+        next.yard.recover(next.rig, next.spawnE, next.spawnN);
+        placeBody(next, next.spawnE, next.spawnN);
         showRobot();
         director.setView(director.view, 1);
         focusNoon(viewer, next);
-        next.drape.follow(midE, midN);
+        next.drape.follow(next.spawnE, next.spawnN);
       }
     }
     paintPanel();
@@ -268,10 +274,11 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     // many kilometres wide and would paint over the measured ground.
     const vehicle = director.view === 'robot' ? robotPose(focus) : null;
     director.step(dt, groundAt, vehicle);
-    poseModel(focus);
+    poseDozer(dozer, focus);
     frameMs.push(dt * 1000);
     if (frameMs.length > 40) frameMs.shift();
-    if (!qualityDropped && frameMs.length > 30) {
+    const shooting = new URLSearchParams(location.search).get('capture') === '1';
+    if (!shooting && !qualityDropped && frameMs.length > 30) {
       const avg = frameMs.reduce((sum, value) => sum + value, 0) / frameMs.length;
       if (avg > 34) {
         viewer.resolutionScale = 0.7;
@@ -308,6 +315,36 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     },
     ground: groundAt,
     snap: () => director.jump(director.view),
+    holdResolution: () => {
+      qualityDropped = true;
+      viewer.resolutionScale = 1;
+    },
+    go: (view: ViewId) => {
+      if (view === 'robot') showRobot();
+      else {
+        if (director.view === 'robot') {
+          const pose = focus.yard.pose(focus.rig);
+          placeBody(focus, pose.east + 7, pose.north + 14);
+          director.anchor.heading = pose.heading;
+        }
+        director.anchor.pitch = view === 'titan' ? -0.5 : -0.22;
+      }
+      director.setView(view, 0);
+      director.jump(view);
+    },
+    place: (siteId: string) => {
+      const next = sites.find((site) => site.id === siteId);
+      if (!next || next.id === focus.id) return;
+      focus = next;
+      next.yard.recover(next.rig, next.spawnE, next.spawnN);
+      placeBody(next, next.spawnE, next.spawnN);
+      showRobot();
+      director.setView(director.view, 0);
+      director.jump(director.view);
+      focusNoon(viewer, next);
+      next.drape.follow(next.spawnE, next.spawnN);
+      next.drape.flush();
+    },
   };
 
   function paintPanel() {
@@ -327,20 +364,11 @@ function robotPose(site: Site): { lon: number; lat: number; up: number; heading:
   return { lon: ll.lon, lat: ll.lat, up: pose.up, heading: pose.heading, speed: pose.speed };
 }
 
-function poseModel(site: Site): void {
+function poseDozer(dozer: Dozer, site: Site): void {
   const pose = site.yard.pose(site.rig);
   const ground = site.field.sample(pose.east, pose.north);
   const ll = site.project(pose.east, pose.north);
-  const position = Cesium.Cartesian3.fromDegrees(ll.lon, ll.lat, Math.max(ground + 0.05, Math.min(ground + 2.4, pose.up - 0.85)));
-  const rotation = Cesium.Transforms.headingPitchRollQuaternion(position, new Cesium.HeadingPitchRoll(pose.heading - Math.PI / 2, 0, 0));
-  site.model.modelMatrix = Cesium.Matrix4.fromTranslationQuaternionRotationScale(position, rotation, new Cesium.Cartesian3(2.6, 2.6, 2.6));
-  if (site.model.ready) {
-    const shovel = site.model.getNode('shovel');
-    if (shovel) {
-      const tilt = Cesium.Matrix4.fromRotationTranslation(Cesium.Matrix3.fromRotationX(-site.rig.bladeAngle * 1.35));
-      shovel.matrix = Cesium.Matrix4.multiply(shovel.originalMatrix, tilt, new Cesium.Matrix4());
-    }
-  }
+  dozer.place(ll.lon, ll.lat, Math.max(ground, Math.min(ground + 1.2, pose.up - 1.05)), pose.heading, site.rig.bladeAngle);
 }
 
 function paintCuts(site: Site): void {
@@ -361,7 +389,7 @@ function focusNoon(viewer: Cesium.Viewer, site: Site): void {
   viewer.clock.currentTime = Cesium.JulianDate.fromIso8601(site.noon);
 }
 
-async function loadSite(viewer: Cesium.Viewer, base: string, path: string, relief: Relief): Promise<Site> {
+async function loadSite(viewer: Cesium.Viewer, base: string, path: string): Promise<Site> {
   const meta = await fetch(`${base}${path}`).then((res) => res.json()) as SiteMeta;
   const heightBuf = await fetch(`${base}${path.replace('terrain.json', 'height.png')}`).then((res) => res.arrayBuffer());
   const png = await decodeGrayPng(heightBuf);
@@ -392,8 +420,10 @@ async function loadSite(viewer: Cesium.Viewer, base: string, path: string, relie
   yard.density = meta.density_kg_m3;
   const midE = ((cols - 1) * meta.spacing_m) / 2;
   const midN = ((rows - 1) * meta.spacing_m) / 2;
-  const rig = yard.spawn('dozer', midE, midN);
-  rig.bladeAngle = 0.42;
+  const spawnE = meta.spawn_m?.[0] ?? midE;
+  const spawnN = meta.spawn_m?.[1] ?? midN;
+  const rig = yard.spawn('dozer', spawnE, spawnN);
+  rig.bladeAngle = 0.18;
   yard.rest();
   const crs = projector(meta.crs);
   const originX = meta.origin_xy[0];
@@ -409,7 +439,8 @@ async function loadSite(viewer: Cesium.Viewer, base: string, path: string, relie
     project,
     new URL(meta.image, new URL(path, new URL(base, window.location.href))).href,
     meta.image_bounds,
-    (lon, lat) => relief.sample(lon, lat),
+    meta.water_m ?? null,
+    Boolean(meta.forest),
   );
   if (edits) {
     for (const edit of edits) {
@@ -421,13 +452,23 @@ async function loadSite(viewer: Cesium.Viewer, base: string, path: string, relie
   const pose = yard.pose(rig);
   drape.follow(pose.east, pose.north);
   drape.flush();
-  const at = project(pose.east, pose.north);
-  const model = await Cesium.Model.fromGltfAsync({
-    url: new URL('models/tractor-shovel.glb', new URL(base, window.location.href)).href,
-    modelMatrix: Cesium.Matrix4.fromTranslation(Cesium.Cartesian3.fromDegrees(at.lon, at.lat, field.sample(pose.east, pose.north))),
-  });
-  viewer.scene.primitives.add(model);
-  return { id: meta.id, name: meta.name, field, yard, rig, drape, originX, originY, project, inverse, noon: meta.noon, model, bounds: meta.image_bounds };
+  return {
+    id: meta.id,
+    name: meta.name,
+    field,
+    yard,
+    rig,
+    drape,
+    originX,
+    originY,
+    project,
+    inverse,
+    noon: meta.noon,
+    bounds: meta.image_bounds,
+    waterLevel: meta.water_m ?? null,
+    spawnE,
+    spawnN,
+  };
 }
 
 function loadSave(): Record<string, { i: number; h: number }[]> | null {

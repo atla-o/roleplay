@@ -1,6 +1,6 @@
 # Roleplay
 
-Roleplay is a 1:1 ground you can walk and drive. Polar Desert Basin is a 4 km square of ArcticDEM at 2 m. Île René-Levasseur is a 4 km square of Canada's 1 m HRDEM, stored as the 2 m mean of those posts. Sentinel-2 colors the ground. A robot on that ground cuts and pushes soil. Cut and fill stay equal.
+Roleplay is a 1:1 ground you can walk and drive. Polar Desert Basin is a 4 km square of ArcticDEM at 2 m. Île René-Levasseur is a 4 km square of Canada's 1 m HRDEM on the western shore, stored as the 2 m mean of those posts, with the reservoir drawn as water at the measured surface. Sentinel-2 colors the ground. A robot on that ground cuts and pushes soil. Cut and fill stay equal.
 
 There is no HUD. One button in the corner opens two choices: viewpoint (Titan, Robot, Human) and place (the two sites). Esc closes it. `?capture=1` hides the button. Controls are listed below, not drawn on the screen.
 
@@ -34,7 +34,7 @@ Terrain edits are remembered in the browser. There is no menu that edits the gro
 
 ## Bake
 
-`tools/bake/bake.py` rebuilds the Polar Desert Basin rasters from ArcticDEM v4.1 and the NRCan National Hydro Network. `tools/bake/ile.py` rebuilds the Île René-Levasseur window from the NRCan HRDEM mosaic, MRDEM-30, 2020 land cover, and a GBIF occurrence seed. See `tools/bake/README.md` and `ATTRIBUTION.md`.
+`tools/bake/bake.py` rebuilds the Polar Desert Basin rasters from ArcticDEM v4.1 and the NRCan National Hydro Network. The island square committed under `public/data/ile` is the shore window described in `ATTRIBUTION.md`. `tools/bake/ile.py` still builds the older wide mosaic. See `tools/bake/README.md` and `ATTRIBUTION.md`.
 
 ## Parameters
 

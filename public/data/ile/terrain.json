@@ -2,15 +2,17 @@
   "id": "rene-levasseur",
   "name": "Île René-Levasseur",
   "crs": "EPSG:32619",
-  "origin_xy": [506000, 5690000],
+  "origin_xy": [491800, 5696000],
   "spacing_m": 2,
   "cols": 2000,
   "rows": 2000,
   "png_row0": "north",
-  "elevation_m": { "min": 404.8716125488281, "max": 563.6074829101562 },
+  "elevation_m": { "min": 348.2874755859375, "max": 616.302490234375 },
   "image": "color.jpg",
-  "image_bounds": { "west": -68.91383, "south": 51.36118, "east": -68.85625, "north": 51.39721 },
+  "image_bounds": { "west": -69.11801, "south": 51.41516, "east": -69.06042, "north": 51.45115 },
   "repose_deg": 32,
   "density_kg_m3": 1700,
-  "noon": "2026-06-21T16:35:00Z"
+  "forest": true,
+  "water_m": 348.59,
+  "noon": "2026-06-21T11:20:00Z"
 }

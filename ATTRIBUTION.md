@@ -6,7 +6,7 @@ The basin window is EPSG:3413, southwest corner X −1,116,740 m, Y −1,136,008
 
 ## ArcticDEM v4.1
 
-Elevation on Polar Desert Basin is the public ArcticDEM v4.1 2 m mosaic, tile `29_29_2_2_2m_v4.1`, read at native 2 m. Nothing is invented between those posts. The mesh draws every post within about 240 m of the body and every eighth post farther away, which is 16 m, still the same measurements.
+Elevation on Polar Desert Basin is the public ArcticDEM v4.1 2 m mosaic, tile `29_29_2_2_2m_v4.1`, read at native 2 m. Nothing is invented between those posts. The mesh draws every post within 160 m of the body, every second post out to about 540 m, and every eighth post beyond that. Those coarser posts are the same measurements, 4 m and 16 m apart. A short skirt covers the seam so the rings do not show the globe through a crack. Another skirt drops from the outer posts so the tile edge is not a hole. The surface is opaque. There is no second, transparent terrain layer.
 
 Porter et al. 2023. ArcticDEM, Version 4.1. Polar Geospatial Center, University of Minnesota. https://doi.org/10.7910/DVN/3VDC4W
 
@@ -38,19 +38,21 @@ Oceans are held at sea level so the giant walks the water surface rather than th
 
 ## World imagery
 
-The ground picture on both squares, and the globe around them, is Sentinel-2 cloudless 2021 by [EOX IT Services GmbH](https://s2maps.eu) (CC BY 4.0), containing modified Copernicus Sentinel data 2021. The squares use a cropped mosaic of those tiles. The fallback mosaic is Natural Earth II, shipped with CesiumJS and in the public domain. No finer open orthophoto was found for either square under a permissive licence, so nothing sharper than Sentinel-2 is draped.
+The ground picture on the basin, and the globe around both squares, is Sentinel-2 cloudless 2021 by [EOX IT Services GmbH](https://s2maps.eu) (CC BY 4.0), containing modified Copernicus Sentinel data 2021. The island square uses the same publisher's cloudless 2020 mosaic, because the 2021 tiles there are a flatter, darker file of the same forest. Those JPEGs sit near surface reflectance, so boreal canopy is only a few percent bright. The island mosaic is multiplied by 3 before it is saved, a display gain in the neighbourhood of the Sentinel Hub true-color gain of 2.5, so the canopy is green on screen instead of a black mat. The basin mosaic is unchanged. The fallback globe is Natural Earth II, shipped with CesiumJS and in the public domain. No finer open orthophoto was found for either square under a permissive licence, so nothing sharper than Sentinel-2 is draped.
 
 ## Île René-Levasseur
 
-The playable square is inside the Louis-Babel Ecological Reserve, on the island in the Manicouagan reservoir, Quebec. It is research terrain. The reserve sits in the Manicouagan-Uapishka UNESCO Biosphere Reserve and in Nitassinan of the Innu of Pessamit.
+The playable square is the western shore of Île René-Levasseur, where the forest meets the Manicouagan reservoir, Quebec. The island sits in the Manicouagan-Uapishka UNESCO Biosphere Reserve and in Nitassinan of the Innu of Pessamit. It is research terrain.
 
-Elevation is the NRCan HRDEM 1 m DTM, project `Reserve_Ecologique_Louis_Babel_2024`, tile `dtm_1m_utm19_e_0_169`, NAD83(CSRS) / UTM zone 19N. The committed grid is 2000 by 2000 posts at 2 m: each post is the average of the 1 m posts under it, not a made-up detail. The viewer treats that UTM frame as WGS84, which is about a metre at this latitude. ArcticDEM does not cover 51°N. The 4 km square does not include the reservoir shore; the water of the ring is in the surrounding Sentinel-2 picture, not in this height grid.
+Elevation is the NRCan HRDEM 1 m DTM, project `Lac_Pletipi_2024`, tile `dtm_1m_utm19_w_0_169`, NAD83(CSRS) / UTM zone 19N. The window is source pixels x 1800 to 5800 and y 0 to 4000 of that tile. The committed grid is 2000 by 2000 posts at 2 m: each post is the mean of the four 1 m posts under it. Southwest corner 491800 E, 5696000 N. The viewer treats that UTM frame as WGS84, which is about a metre at this latitude. ArcticDEM does not cover 51°N.
+
+Posts the lidar left empty over the reservoir are filled with 348.59 m, the median of the measured water surface in this window (returns between 348.0 m and 350.5 m). That is the lidar surface, not a published pool elevation and not a guessed 350 m. A flat water plane is drawn 0.35 m above it, only where the posts are at that surface, so the reservoir reads as water and the forest stays ground. Simple cone trees, 7 to 16 m tall, stand on land above that level. They are not a survey of stems. They are there so the canopy has a height.
 
 Licence: [Open Government Licence – Canada](https://open.canada.ca/en/open-government-licence-canada). Contains information licensed under the Open Government Licence – Canada.
 
 ## What is smoother than the source
 
-Sentinel-2 color is about 10 m. Where the mesh asks for a color between those pixels, the picture is bilinear. A faint shading grain, a few metres across, is drawn on top so the ground is not a flat poster. It does not move the posts and it does not repaint the satellite colors into a new map. The outer 80 m of each square eases onto the global DEM so the tile does not end as a cliff. That global DEM is the Mapzen/Tilezen composite below, and it is not the near-field source.
+Sentinel-2 color is about 10 m. Where the mesh asks for a color between those pixels, the picture is bilinear. Shading comes from the slope and curvature of the same 2 m posts, stored as a normal map. It does not move the posts and it does not invent ridges. Horizontal placement of each post is a bilinear of the four corner coordinates. Against the projection that error stays under 1.5 m on the basin and under 0.4 m on the island, inside one post. The tile does not blend into the global DEM. The Mapzen/Tilezen composite below is only the globe between the two squares.
 
 ## Species layer
 
@@ -60,9 +62,11 @@ Occurrence points in `public/data/occurrences.json` were retrieved from the [GBI
 
 The world is one CesiumJS scene (Apache-2.0). Titan, the robot, and the human stand on the same posts.
 
+The machine starts about 500 m north of the basin centre, still on the measured posts, where the valley floor rises toward the hills. That is a spawn, not a change to the elevation.
+
 The robot is a raycast chassis from [cannon-es](https://github.com/pmndrs/cannon-es) 0.20.0 (MIT). The blade cuts the 2 m posts and lays that volume down ahead of it. Spoil that would stand steeper than the angle of repose slumps sideways, and the volume stays in the field. On the basin that angle is 35° and the bulk density used for the slowing force is 1.8 t/m³, the sandy-gravel range in French, The Periglacial Environment (2007), and in Das, Principles of Geotechnical Engineering. On the island the angle is 32° and the density is 1.7 t/m³, the loose sandy-till end of that same range. These are not a lab sample from either square.
 
-The machine meshes are Kenney's Car Kit (`tractor-shovel.glb`, `tractor.glb`, `garbage-truck.glb`) and the shared `models/Textures/colormap.png` those files reference, [CC0](https://creativecommons.org/publicdomain/zero/1.0/). Credit Kenney, https://kenney.nl/assets/car-kit. No Blender or other GPL program code is included. The texture sits beside the models at the path the glTF asks for, so it resolves under a nested preview base.
+The machine on screen is built from boxes in this repository (`src/drive/dozer.ts`). It is about 3.5 m across the outsides of the tracks and 3.7 m across the blade, which matches the chassis width. No third-party mesh is loaded. Kenney's Car Kit remains in `public/models` from earlier passes and is not drawn. That kit is [CC0](https://creativecommons.org/publicdomain/zero/1.0/), credit Kenney, https://kenney.nl/assets/car-kit. No Blender or other GPL program code is included.
 
 [Steel](https://github.com/skild-ai/steel) (Apache-2.0, also in NVIDIA Newton) is a rigid-body solver for batched robot manipulation. Its browser build is WebGPU ([steel-webgpu](https://github.com/skild-ai/steel-webgpu)), not WASM, and it does not sculpt a heightfield. It is not linked into this app.
 

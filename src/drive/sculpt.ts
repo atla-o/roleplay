@@ -223,14 +223,14 @@ export function planeBlade(field: Field, east: number, north: number, heading: n
   for (const i of under) {
     const h = field.heights[i] ?? 0;
     if (h <= edgeY + 0.02) continue;
-    const dh = Math.min(h - edgeY, 0.12);
+    const dh = Math.min(h - edgeY, 0.28);
     field.heights[i] = h - dh;
     field.channel[i] = 1;
     field.mark(i);
     moved += dh * area;
   }
   if (moved <= 0) return 0;
-  const ahead = cellsIn(field, east + fx * field.spacing * 2.1, north + fn * field.spacing * 2.1, field.spacing * 0.85, Math.max(width / 2, field.spacing * 0.7), fx, fn);
+  const ahead = cellsIn(field, east + fx * field.spacing * 1.05, north + fn * field.spacing * 1.05, field.spacing * 0.45, Math.max(width / 2, field.spacing * 0.55), fx, fn);
   const pile = ahead.length ? ahead : under;
   const lift = moved / (pile.length * area);
   for (const i of pile) {

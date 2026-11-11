@@ -74,10 +74,17 @@ export class Viewport {
     this.scene.add(this.preview);
   }
 
-  setDrawMode(drawing: boolean): void {
-    this.controls.mouseButtons.LEFT = drawing ? (null as unknown as THREE.MOUSE) : THREE.MOUSE.ROTATE;
-    this.controls.mouseButtons.RIGHT = drawing ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+  /** Work tools take the left button and the first finger. Right-drag and two fingers still look around. */
+  setGroundTool(active: boolean): void {
+    this.controls.mouseButtons.LEFT = (active ? -1 : THREE.MOUSE.ROTATE) as THREE.MOUSE;
+    this.controls.mouseButtons.RIGHT = active ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+    this.controls.touches.ONE = (active ? -1 : THREE.TOUCH.ROTATE) as THREE.TOUCH;
     this.controls.enabled = !this.walk;
+    this.renderer.domElement.style.cursor = active ? 'crosshair' : '';
+  }
+
+  setDrawMode(drawing: boolean): void {
+    this.setGroundTool(drawing);
   }
 
   private walk = false;
@@ -136,12 +143,12 @@ export class Viewport {
     return { x: hits[0].point.x, z: hits[0].point.z };
   }
 
-  sync(sim: Sim, meta: TerrainMeta, overlay: OverlayState): void {
+  sync(sim: Sim, meta: TerrainMeta, overlay: OverlayState, parts: { terrain?: boolean } = {}): void {
     this.field = sim.field;
     this.meta = meta;
     this.overlay = overlay;
     this.frozen = !sim.inMelt();
-    this.rebuildTerrain(sim.field, sim.water);
+    if (parts.terrain !== false) this.rebuildTerrain(sim.field, sim.water);
     this.rebuildWater(sim.field, sim.water);
     syncWorks(this.works, sim, sim.field);
     this.syncMachines(sim);
@@ -262,8 +269,29 @@ export class Viewport {
   private rebuildTerrain(field: Heightfield, water: WaterField): void {
     const { cols, rows, spacing, z } = field;
     const n = cols * rows;
-    const positions = new Float32Array(n * 3);
-    const colors = new Float32Array(n * 3);
+    const geo = this.terrain.geometry;
+    let positionAttr = geo.getAttribute('position') as THREE.BufferAttribute | null;
+    if (!positionAttr || positionAttr.count !== n) {
+      positionAttr = new THREE.BufferAttribute(new Float32Array(n * 3), 3);
+      geo.setAttribute('position', positionAttr);
+      geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+      const index = new Uint32Array((rows - 1) * (cols - 1) * 6);
+      let k = 0;
+      for (let r = 0; r < rows - 1; r++) {
+        for (let c = 0; c < cols - 1; c++) {
+          const i = r * cols + c;
+          index[k++] = i;
+          index[k++] = i + 1;
+          index[k++] = i + cols;
+          index[k++] = i + 1;
+          index[k++] = i + cols + 1;
+          index[k++] = i + cols;
+        }
+      }
+      geo.setIndex(new THREE.BufferAttribute(index, 1));
+    }
+    const positions = positionAttr.array as Float32Array;
+    const colors = (geo.getAttribute('color') as THREE.BufferAttribute).array as Float32Array;
     const min = this.meta.elevation_m.min;
     const span = Math.max(1e-6, this.meta.elevation_m.max - min);
     for (let r = 0; r < rows; r++) {
@@ -284,32 +312,17 @@ export class Viewport {
           cb = mix(cb, mix(0.34, 0.22, u), k);
         }
         if (field.edited[i]) {
-          cr = mix(cr, 0.64, 0.16);
-          cg = mix(cg, 0.58, 0.16);
-          cb = mix(cb, 0.48, 0.16);
+          cr = mix(cr, 0.78, 0.42);
+          cg = mix(cg, 0.64, 0.34);
+          cb = mix(cb, 0.42, 0.28);
         }
         colors[i * 3] = srgb(cr);
         colors[i * 3 + 1] = srgb(cg);
         colors[i * 3 + 2] = srgb(cb);
       }
     }
-    const index = new Uint32Array((rows - 1) * (cols - 1) * 6);
-    let k = 0;
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < cols - 1; c++) {
-        const i = r * cols + c;
-        index[k++] = i;
-        index[k++] = i + 1;
-        index[k++] = i + cols;
-        index[k++] = i + 1;
-        index[k++] = i + cols + 1;
-        index[k++] = i + cols;
-      }
-    }
-    const geo = this.terrain.geometry;
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geo.setIndex(new THREE.BufferAttribute(index, 1));
+    positionAttr.needsUpdate = true;
+    (geo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
     geo.computeVertexNormals();
     geo.computeBoundingSphere();
   }

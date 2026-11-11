@@ -1,0 +1,61 @@
+# Live playable preview for every pull request.
+# Deploys dist/ to the gh-pages branch at pr-preview/pr-<number>/.
+# The site URL is https://atla-o.github.io/roleplay/pr-preview/pr-<number>/
+#
+# This needs two repository settings only an admin can turn on:
+# 1. Settings → Pages → Build and deployment → Source: Deploy from a branch,
+#    Branch: gh-pages, Folder: / (root).
+# 2. Settings → Actions → General → Workflow permissions →
+#    Read and write permissions.
+name: Deploy PR previews
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - closed
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: github.event.action != 'closed'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install and build
+        if: github.event.action != 'closed'
+        run: npm ci && npm run build
+
+      - name: Keep GitHub Pages from dropping Cesium files
+        if: github.event.action != 'closed'
+        run: touch dist/.nojekyll
+
+      - name: Deploy preview
+        id: preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: dist
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          action: auto
+
+      - name: Preview URL
+        if: steps.preview.outputs.deployment-action == 'deploy'
+        run: echo "Playable preview ${{ steps.preview.outputs.preview-url }}"

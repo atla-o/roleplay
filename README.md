@@ -1,6 +1,6 @@
 # Roleplay
 
-Roleplay is the Creation division's world map and measured basin. The map is a CesiumJS globe (Apache-2.0) split into Tier 1 cold squares, north first: Northern Canada, the United States including North Dakota, Northern Europe, Russia, and Antarctica. One square, the Polar Desert Basin, opens the measured 4 × 4 km surface. There the existing Three.js basin keeps real ArcticDEM and NHN ground, cold-method drainage, the ninety-day window, and a 1.7 m walk.
+Roleplay is the Creation division's world map and measured terrain. The map is a CesiumJS globe (Apache-2.0) split into Tier 1 cold squares, north first: Northern Canada, the United States including North Dakota, Northern Europe, Russia, and Antarctica, plus the Côte-Nord square. Two squares open measured ground. Polar Desert Basin is the 4 × 4 km Arctic surface: ArcticDEM and NHN, cold-method drainage, the ninety-day window, and a 1.7 m walk. Île René-Levasseur is the island in the Manicouagan ring reservoir. On the globe the ring reads as an O. That square is research terrain, not land to reshape: mass movers stay off it, and the crew there is a survey.
 
 At globe scale the player is a giant. Swarm orders move mass movers, then the bio builder and weather manipulator, then structure builders, across a selected square. Cut and fill on that view are conserved sim parameters. They do not rewrite the measured basin.
 
@@ -22,7 +22,7 @@ npm run preview
 
 ## Bake
 
-`tools/bake/bake.py` rebuilds `public/data/` from ArcticDEM v4.1 and the NRCan National Hydro Network. See `tools/bake/README.md` and `ATTRIBUTION.md`.
+`tools/bake/bake.py` rebuilds the Polar Desert Basin rasters from ArcticDEM v4.1 and the NRCan National Hydro Network. `tools/bake/ile.py` rebuilds the Île René-Levasseur window from the NRCan HRDEM mosaic, MRDEM-30, 2020 land cover, and a GBIF occurrence seed. See `tools/bake/README.md` and `ATTRIBUTION.md`.
 
 ## Parameters
 

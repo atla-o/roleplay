@@ -24,6 +24,16 @@ Slope, closed-depression depth, and D8 flow accumulation are derived from the me
 
 Sentinel-2 cloudless by [EOX IT Services GmbH](https://s2maps.eu) (CC BY 4.0), containing modified Copernicus Sentinel data 2021. The fallback mosaic is Natural Earth II, shipped with CesiumJS and in the public domain.
 
+## Île René-Levasseur
+
+The second measured square is the island in the Manicouagan ring reservoir, Quebec. It is research terrain and an emblem of the O, not land to reshape.
+
+Place: Louis-Babel Ecological Reserve, Réserve de biodiversité de la Météorite, Manicouagan-Uapishka UNESCO Biosphere Reserve, and Nitassinan of the Innu of Pessamit. The reservoir is held by Hydro-Québec's Daniel-Johnson Dam. Mont de Babel is about 952 m.
+
+Elevation on the tile is the NRCan HRDEM mosaic 1 m DTM, resampled. Licence: Open Government Licence – Canada. ArcticDEM does not cover 51°N. NRCan MRDEM-30 is sampled on the same window for the coarser national surface (Open Government Licence – Canada; Copernicus GLO-30 is an input to MRDEM). Quebec's own 1 m LiDAR sheets (CC BY 4.0, Données Québec) were not downloaded one by one; the HRDEM mosaic is the lidar-derived national surface over this island.
+
+Water on the tile is the water class of NRCan 2020 Land Cover of Canada (Open Government Licence – Canada). GRHQ and NHN lines were not clipped into this build.
+
 ## Species layer
 
 Occurrence points in `public/data/occurrences.json` were retrieved from the [GBIF Occurrence API](https://www.gbif.org) on 2026-11-09. Cite GBIF.org. Each record keeps the licence of its source dataset.

@@ -114,12 +114,19 @@ export async function bootRing(root: HTMLElement, hooks?: { onWorld?: () => void
       button.classList.toggle('active', button.dataset.tool === tool);
     });
     root.querySelector('#crosshair')?.classList.toggle('on', tool === 'walk');
+    root.querySelector('#walk-pad')?.toggleAttribute('hidden', tool !== 'walk');
+    const ground = tool === 'survey' || tool === 'monitor';
+    controls.mouseButtons.LEFT = (ground ? -1 : THREE.MOUSE.ROTATE) as THREE.MOUSE;
+    controls.mouseButtons.RIGHT = ground ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+    controls.touches.ONE = (ground ? -1 : THREE.TOUCH.ROTATE) as THREE.TOUCH;
+    controls.enabled = tool !== 'walk';
+    renderer.domElement.style.cursor = ground ? 'crosshair' : '';
   };
   root.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((button) => {
     button.addEventListener('click', () => {
       tool = (button.dataset.tool as typeof tool) || 'orbit';
-      if (tool === 'walk') stand(wx, wz, yaw);
-      else {
+      if (tool === 'walk' && !stand(wx, wz, yaw)) tool = 'orbit';
+      else if (tool !== 'walk') {
         walking = false;
         controls.enabled = true;
       }
@@ -169,6 +176,18 @@ export async function bootRing(root: HTMLElement, hooks?: { onWorld?: () => void
       status.textContent = 'Monitoring crew. Simulated, and it does not cut or fill.';
     }
   });
+  root.querySelectorAll<HTMLButtonElement>('[data-move]').forEach((button) => {
+    const key = button.dataset.move || '';
+    const down = (ev: Event) => {
+      ev.preventDefault();
+      keys.add(key);
+    };
+    const up = () => keys.delete(key);
+    button.addEventListener('pointerdown', down);
+    button.addEventListener('pointerup', up);
+    button.addEventListener('pointerleave', up);
+    button.addEventListener('pointercancel', up);
+  });
   const onKeyDown = (ev: KeyboardEvent) => keys.add(ev.key);
   const onKeyUp = (ev: KeyboardEvent) => keys.delete(ev.key);
   window.addEventListener('keydown', onKeyDown);
@@ -194,10 +213,10 @@ export async function bootRing(root: HTMLElement, hooks?: { onWorld?: () => void
   paintTool();
   status.textContent = 'Measured terrain. Forest, water, and species are observation layers.';
 
-  function stand(x: number, zed: number, face: number) {
+  function stand(x: number, zed: number, face: number): boolean {
     if (wetAt(water, cols, rows, meta.spacing_m, x, zed)) {
       status.textContent = 'Open water. Step onto the island or the shore.';
-      return;
+      return false;
     }
     wx = x;
     wz = zed;
@@ -213,6 +232,7 @@ export async function bootRing(root: HTMLElement, hooks?: { onWorld?: () => void
     camera.far = 80_000;
     camera.updateProjectionMatrix();
     paintTool();
+    return true;
   }
 
   function step(dt: number) {
@@ -289,6 +309,16 @@ function markup(): string {
       <button id="open-world" class="text-btn" type="button" style="width:auto">World map</button>
       <button id="ring-credits" class="text-btn" type="button" style="width:auto">Credits</button>
     </header>
+    <div class="coach">
+      <p>This square is measured research terrain. Survey reads a point. The monitoring crew does not cut or fill.</p>
+      <p id="coach-how">Drag to orbit. On a phone, two fingers look around and a tap surveys.</p>
+    </div>
+    <div id="walk-pad" class="walk-pad" hidden>
+      <button type="button" data-move="w" aria-label="Walk forward">▲</button>
+      <button type="button" data-move="a" aria-label="Walk left">◀</button>
+      <button type="button" data-move="s" aria-label="Walk back">▼</button>
+      <button type="button" data-move="d" aria-label="Walk right">▶</button>
+    </div>
     <aside class="rail">
       <div class="group">View</div>
       <button class="tool active" data-tool="orbit" type="button">Orbit</button>
@@ -374,12 +404,13 @@ function buildWater(meta: TerrainMeta, z: Float32Array, water: Uint8Array): THRE
   const { cols, rows, spacing_m: spacing } = meta;
   const positions: number[] = [];
   const index: number[] = [];
-  for (let r = 0; r < rows - 1; r++) {
-    for (let c = 0; c < cols - 1; c++) {
+  for (let r = 0; r < rows - 2; r += 2) {
+    for (let c = 0; c < cols - 2; c += 2) {
       const i = r * cols + c;
-      if (!(water[i] || water[i + 1] || water[i + cols] || water[i + cols + 1])) continue;
+      const corners = [i, i + 2, i + cols * 2, i + cols * 2 + 2];
+      if (!corners.some((corner) => water[corner])) continue;
       const base = positions.length / 3;
-      for (const corner of [i, i + 1, i + cols, i + cols + 1]) {
+      for (const corner of corners) {
         const cc = corner % cols;
         const rr = (corner / cols) | 0;
         positions.push(cc * spacing, z[corner] + 1.2, (rows - 1 - rr) * spacing);

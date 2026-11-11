@@ -77,6 +77,35 @@ try {
   await page.evaluate(() => window.__roleplay.settle());
   await page.screenshot({ path: `${outDir}/03-tile-basin.png` });
 
+  const work = await page.evaluate(() => {
+    const before = window.__roleplay.stats().cut_m3;
+    const graded = window.__roleplay.grade(2000, 2000, 48);
+    const cut = window.__roleplay.stats().cut_m3;
+    const undone = window.__roleplay.undo();
+    const back = window.__roleplay.stats().cut_m3;
+    return {
+      ok: graded.ok,
+      reason: graded.reason || window.__roleplay.status(),
+      before,
+      cut,
+      undone,
+      back,
+      coach: document.querySelector('#coach-next')?.textContent || '',
+    };
+  });
+  if (!work.ok) throw new Error(`grade failed: ${work.reason}`);
+  if (!(work.cut > work.before)) throw new Error(`grade did not move ground: ${JSON.stringify(work)}`);
+  if (!work.undone || Math.abs(work.back - work.before) > 1) throw new Error(`undo missed: ${JSON.stringify(work)}`);
+  if (!work.coach) throw new Error('the basin has no onboarding line');
+  await page.click('[data-tool="grade"]');
+  const box = await page.locator('#tile canvas').boundingBox();
+  if (!box) throw new Error('basin canvas missing');
+  await page.mouse.click(box.x + box.width * 0.55, box.y + box.height * 0.48);
+  await page.waitForTimeout(1200);
+  const clicked = await page.locator('#status').innerText();
+  if (!/Pad graded|fill bank|off the measured/i.test(clicked)) throw new Error(`grade click had no result: ${clicked}`);
+  await page.screenshot({ path: `${outDir}/07-graded-pad.png` });
+
   const pose = await page.evaluate(() => {
     window.__roleplay.enterWalk(2000, 2000, 0.2, -0.12);
     return window.__roleplay.pose();
@@ -84,6 +113,17 @@ try {
   await page.evaluate(() => window.__roleplay.settle());
   await page.screenshot({ path: `${outDir}/04-walk-mode.png` });
   if (Math.abs(pose.eye - (pose.surface + 1.7)) > 0.08) throw new Error(`eye height off: ${JSON.stringify(pose)}`);
+
+  const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
+  await phone.goto('http://127.0.0.1:4173/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await phone.waitForFunction(() => window.__roleplay && window.__roleplay.ready && window.__roleplay.mode() === 'world');
+  await phone.waitForTimeout(800);
+  await phone.screenshot({ path: `${outDir}/08-phone-world.png` });
+  await phone.evaluate(() => window.__roleplay.enterBasin());
+  await phone.waitForFunction(() => window.__roleplay.mode() === 'tile' && window.__roleplay.tileReady);
+  await phone.waitForTimeout(600);
+  await phone.screenshot({ path: `${outDir}/09-phone-basin.png` });
+  await phone.close();
 
   const serious = errors.filter((line) => !/Failed to obtain image tile|net::ERR_|404/.test(line));
   if (serious.length) {

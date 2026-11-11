@@ -3,6 +3,7 @@ import { PLAYABLE, RING_TILE, TILES } from '../src/world/tiles';
 import { readFileSync } from 'node:fs';
 import { decodeGrayPng } from '../src/load/png';
 import { Heightfield } from '../src/sim/grid';
+import { Sim } from '../src/sim/sim';
 import { solveWater, type WaterConfig } from '../src/sim/water';
 import { cutChannel } from '../src/sim/works';
 
@@ -72,6 +73,16 @@ const ileDecoded = await decodeGrayPng(ilePng.buffer.slice(ilePng.byteOffset, il
 assert(ileDecoded.width === ileMeta.cols && ileDecoded.height === ileMeta.rows, 'ring raster does not match its grid');
 assert(ileMeta.elevation_m.min > 300 && ileMeta.elevation_m.max > 900 && ileMeta.elevation_m.max < 1200, 'ring elevation is outside the measured window');
 assert(commandSwarm(emptyBook(), 'survey').ok, 'a monitoring crew does not need a cut');
+const slopeZ = new Float32Array(30 * 30);
+for (let r = 0; r < 30; r++) for (let c = 0; c < 30; c++) slopeZ[r * 30 + c] = 80 + c * 0.35;
+const graded = new Sim(new Heightfield(30, 30, 8, slopeZ));
+const sampleAt = graded.field.idx(15, 15);
+const beforeGrade = graded.field.z[sampleAt];
+const gradedResult = graded.grade(15 * 8, (30 - 1 - 15) * 8, 28);
+assert(gradedResult.ok, gradedResult.reason ?? 'pad should grade');
+assert(graded.field.z[sampleAt] !== beforeGrade, 'grading should move the ground');
+assert(graded.undo(), 'undo should restore the pad');
+assert(Math.abs(graded.field.z[sampleAt] - beforeGrade) < 1e-4, 'undo should put the elevation back');
 assert(PLAYABLE.west <= -89.509 && PLAYABLE.east > -89.509, 'basin longitude is outside its square');
 const book = emptyBook();
 assert(!commandSwarm(book, 'bio').ok, 'bio swarm should wait for drainage');

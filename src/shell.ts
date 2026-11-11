@@ -3,6 +3,7 @@ import { bootRing } from './observe/boot';
 import type { Occurrence } from './world/globe';
 import { WorldGlobe } from './world/globe';
 import { WorldPanel } from './world/panel';
+import type { SwarmKind } from './world/books';
 import { PLAYABLE, TILES } from './world/tiles';
 
 export async function start(root: HTMLElement): Promise<void> {
@@ -24,7 +25,9 @@ export async function start(root: HTMLElement): Promise<void> {
     .catch(() => ({ records: [] as Occurrence[] }));
   const records = (occurrences.records ?? []) as Occurrence[];
 
-  let status = 'Northern Canada is the first measured basin. Île René-Levasseur is the second square, for observation.';
+  let status = 'Pick a square. Polar Desert Basin is where crews move the ground. Île René-Levasseur is for observation.';
+  let intent: SwarmKind | null = null;
+  let intentTile: string | null = null;
   let tileApi: Record<string, unknown> | null = null;
   let tileStop: (() => void) | null = null;
   let mode: 'world' | 'tile' = 'world';
@@ -35,7 +38,8 @@ export async function start(root: HTMLElement): Promise<void> {
   const render = () => {
     const tileNow = globe.tile();
     panel.showRegion(tileNow.regionId, tileNow.id);
-    panel.showTile(tileNow, globe.book(), inside(records, tileNow), status);
+    const armed = tileNow.id === intentTile ? intent : null;
+    panel.showTile(tileNow, globe.book(), inside(records, tileNow), status, armed);
   };
 
   panel.onHome = () => globe.frameNorth(1.2);
@@ -45,16 +49,23 @@ export async function start(root: HTMLElement): Promise<void> {
     if (first) globe.select(first.id, false);
   };
   panel.onTile = (id) => globe.select(id, true);
-  panel.onCommand = (kind) => {
+  const order = (kind: SwarmKind) => {
     const result = globe.command(kind);
-    const names = {
-      mass: 'Mass ton movers',
-      bio: 'Bio builder and weather manipulator',
-      structure: 'Structure builders',
-      survey: 'Monitoring crew',
-    };
-    status = result.ok ? `${names[kind]} ${kind === 'survey' ? 'are crossing the square. No ground is moved.' : 'are crossing the square.'}` : result.reason || 'The swarm holds.';
+    const chosen = globe.tile();
+    if (result.ok && kind !== 'survey' && chosen.mode === 'terraform') {
+      intent = kind;
+      intentTile = chosen.id;
+    }
+    if (!result.ok) status = result.reason || 'The swarm holds.';
+    else if (kind === 'survey') status = 'Monitoring crew are crossing the square. No ground is moved.';
+    else if (chosen.playable && chosen.mode === 'terraform') {
+      status = 'That crew is booked. Open the basin to cut, drain, grade, or build. The giant tally does not rewrite the surface by itself.';
+    } else status = 'That crew is on the giant view only. This square has no measured surface yet.';
     render();
+    return result;
+  };
+  panel.onCommand = (kind) => {
+    order(kind);
   };
   panel.onEnter = () => {
     void enterBasin();
@@ -77,7 +88,8 @@ export async function start(root: HTMLElement): Promise<void> {
     mode = 'tile';
     tileStop?.();
     tile.replaceChildren();
-    const hooks = { onWorld: () => leaveTile() };
+    const armed = chosen.id === intentTile ? intent : null;
+    const hooks = { onWorld: () => leaveTile(), intent: armed === 'survey' ? null : armed };
     const started = chosen.mode === 'observe' ? await bootRing(tile, hooks) : await boot(tile, hooks);
     tileApi = started;
     tileStop = typeof started.stop === 'function' ? (started.stop as () => void) : null;
@@ -104,7 +116,7 @@ export async function start(root: HTMLElement): Promise<void> {
       mode: () => mode,
       playableId: PLAYABLE.id,
       selectTile: (id: string) => globe.select(id, true),
-      command: (kind: 'mass' | 'bio' | 'structure') => globe.command(kind),
+      command: (kind: SwarmKind) => order(kind),
       book: () => ({ ...globe.book() }),
       enterBasin,
       showWorld: () => leaveTile(),

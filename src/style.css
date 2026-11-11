@@ -206,6 +206,25 @@ dialog a { color: var(--ice); }
 .ticks li.on::before { content: ""; position: absolute; left: 0; top: 0.55em; width: 7px; height: 7px; border: 1px solid var(--silver); border-radius: 50%; background: var(--silver); }
 .close { float: right; color: var(--muted); }
 
+.views { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 8px; }
+.views button {
+  border: 1px solid var(--line);
+  padding: 6px 2px;
+  text-align: center;
+  font-size: 12px;
+}
+.views button i { display: block; color: var(--muted); font-style: normal; font-size: 10px; }
+.views button.active { box-shadow: inset 0 -2px 0 var(--silver); }
+.minimap {
+  position: absolute;
+  z-index: 3;
+  left: 196px;
+  bottom: 18px;
+  width: 168px;
+  height: 168px;
+  border: 1px solid var(--line);
+  background: rgba(16, 18, 20, 0.8);
+}
 .pad { display: flex; flex-wrap: wrap; gap: 6px; }
 .pad button {
   border: 1px solid var(--line);

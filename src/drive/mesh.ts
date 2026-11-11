@@ -83,6 +83,83 @@ function waterPrimitive(field: Field, depth: Float32Array, modelMatrix: Cesium.M
   return surface(new Float64Array(positions), index, modelMatrix, Cesium.Color.fromCssColorString('#2f7ea3').withAlpha(0.72), true);
 }
 
+/** A site mesh split into chunks so a blade edit does not rebuild the whole field. */
+export class ChunkLayer {
+  private readonly chunks = new Map<string, Cesium.Primitive>();
+  private water: Cesium.Primitive | null = null;
+  private skirt: Cesium.Primitive | null = null;
+  private waterDirty = false;
+
+  constructor(
+    private readonly viewer: Cesium.Viewer,
+    readonly field: Field,
+    readonly west: number,
+    readonly south: number,
+    private depth: Float32Array,
+  ) {
+    this.field.touchAll();
+    this.waterDirty = true;
+    this.skirt = skirtPrimitive(field, west, south);
+    this.viewer.scene.primitives.add(this.skirt);
+    this.flush(64);
+  }
+
+  setDepth(depth: Float32Array): void {
+    this.depth = depth;
+    this.waterDirty = true;
+  }
+
+  flush(max = 4): void {
+    const modelMatrix = Cesium.Transforms.eastNorthUpToFixedFrame(Cesium.Cartesian3.fromDegrees(this.west, this.south, 0));
+    let built = 0;
+    for (const key of this.field.dirtyChunks) {
+      if (built >= max) break;
+      this.field.dirtyChunks.delete(key);
+      const [cs, rs] = key.split(':');
+      const c0 = Number(cs) * this.field.chunk;
+      const r0 = Number(rs) * this.field.chunk;
+      const previous = this.chunks.get(key);
+      if (previous) this.viewer.scene.primitives.remove(previous);
+      const primitive = chunkPrimitive(this.field, c0, r0, modelMatrix);
+      this.viewer.scene.primitives.add(primitive);
+      this.chunks.set(key, primitive);
+      built += 1;
+    }
+    if (this.waterDirty && this.field.dirtyChunks.size === 0) {
+      if (this.water) this.viewer.scene.primitives.remove(this.water);
+      const mesh = terrainPrimitive(this.field, this.west, this.south, this.depth);
+      this.water = mesh.water;
+      if (this.water) this.viewer.scene.primitives.add(this.water);
+      this.viewer.scene.primitives.remove(mesh.primitive);
+      this.waterDirty = false;
+    }
+    this.field.dirty = this.field.dirtyChunks.size > 0;
+  }
+}
+
+function chunkPrimitive(field: Field, c0: number, r0: number, modelMatrix: Cesium.Matrix4): Cesium.Primitive {
+  const c1 = Math.min(field.cols - 1, c0 + field.chunk);
+  const r1 = Math.min(field.rows - 1, r0 + field.chunk);
+  const positions: number[] = [];
+  const index: number[] = [];
+  const id: number[] = [];
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      id.push(field.index(c, r));
+      positions.push(c * field.spacing, r * field.spacing, field.heights[field.index(c, r)] ?? 0);
+    }
+  }
+  const stride = c1 - c0 + 1;
+  for (let r = r0; r < r1; r++) {
+    for (let c = c0; c < c1; c++) {
+      const i = (r - r0) * stride + (c - c0);
+      index.push(i, i + 1, i + stride, i + 1, i + stride + 1, i + stride);
+    }
+  }
+  void id;
+  return surface(new Float64Array(positions), index, modelMatrix, Cesium.Color.fromCssColorString('#d2c0a4'), false);
+}
+
 export function skirtPrimitive(field: Field, west: number, south: number): Cesium.Primitive {
   const { cols, rows, spacing } = field;
   const reach = Math.max(1200, spacing * 8);

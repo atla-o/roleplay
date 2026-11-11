@@ -7,6 +7,9 @@ export class Field {
   cutM3 = 0;
   fillM3 = 0;
   dirty = true;
+  /** Chunk keys that need a new mesh. Edits never rebuild the whole field. */
+  readonly dirtyChunks = new Set<string>();
+  readonly chunk = 24;
 
   constructor(
     readonly cols: number,
@@ -17,6 +20,21 @@ export class Field {
     this.heights = heights;
     this.base = heights.slice();
     this.channel = new Uint8Array(heights.length);
+    this.touchAll();
+  }
+
+  touchAll(): void {
+    const nc = Math.ceil(this.cols / this.chunk);
+    const nr = Math.ceil(this.rows / this.chunk);
+    for (let r = 0; r < nr; r++) for (let c = 0; c < nc; c++) this.dirtyChunks.add(`${c}:${r}`);
+    this.dirty = true;
+  }
+
+  mark(i: number): void {
+    const c = i % this.cols;
+    const r = (i / this.cols) | 0;
+    this.dirtyChunks.add(`${(c / this.chunk) | 0}:${(r / this.chunk) | 0}`);
+    this.dirty = true;
   }
 
   reset(): void {
@@ -24,7 +42,7 @@ export class Field {
     this.channel.fill(0);
     this.cutM3 = 0;
     this.fillM3 = 0;
-    this.dirty = true;
+    this.touchAll();
   }
 
   index(c: number, r: number): number {

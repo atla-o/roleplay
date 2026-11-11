@@ -60,17 +60,18 @@ try {
   await page.evaluate(() => window.__roleplay.fly('polar-desert-basin'));
   await page.waitForTimeout(2600);
   await page.screenshot({ path: `${outDir}/11-basin-from-orbit.png` });
-  await page.click('#drive-enter');
-  await page.waitForTimeout(800);
+  await page.evaluate(() => window.__roleplay.setView('vehicle'));
+  await page.waitForTimeout(900);
   await page.keyboard.down('w');
-  await page.keyboard.down('q');
-  await page.waitForTimeout(1800);
+  await page.keyboard.down('f');
+  await page.waitForTimeout(3200);
   await page.keyboard.up('w');
-  await page.keyboard.up('q');
+  await page.keyboard.up('f');
   await page.waitForTimeout(400);
   const volumes = await page.evaluate(() => window.__roleplay.volumes());
+  const read = await page.locator('#drive-read').innerText();
   await page.screenshot({ path: `${outDir}/12-driving.png` });
-  if (!(volumes.cut > 1)) throw new Error(`the blade did not cut: ${JSON.stringify(volumes)}`);
+  if (!(volumes.cut > 1)) throw new Error(`the blade did not cut: ${read} ${JSON.stringify(volumes)}`);
   if (Math.abs(volumes.cut - volumes.fill - volumes.held) > 1) {
     throw new Error(`soil was not conserved: ${JSON.stringify(volumes)}`);
   }

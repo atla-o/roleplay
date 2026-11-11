@@ -2,9 +2,10 @@ import * as Cesium from 'cesium';
 import { decodeGrayPng } from '../load/png';
 import { solveWater, type WaterConfig } from '../sim/water';
 import { Field, metersPerDegree, offsetDegrees, resampleNorthUp } from './field';
-import { skirtPrimitive, terrainPrimitive } from './mesh';
+import { ChunkLayer } from './mesh';
 import { raindrops } from './sculpt';
 import { Yard, type DriveInput, type Rig, type RigKind } from './ride';
+import { Director, drawMinimap, type ViewId } from './views';
 
 interface Patch {
   field: Field;
@@ -13,8 +14,7 @@ interface Patch {
   widthM: number;
   heightM: number;
   depth: Float32Array;
-  parts: ReturnType<typeof terrainPrimitive> | null;
-  skirt: Cesium.Primitive | null;
+  layer: ChunkLayer | null;
 }
 
 interface Place {
@@ -124,9 +124,20 @@ export async function startWorld(root: HTMLElement): Promise<void> {
 
   let focus = basin;
   let active: Rig | null = null;
+  let chosen: RigKind = 'dozer';
+  let previousView: ViewId = 'titan';
   const keys = new Set<string>();
-  const input: DriveInput = { throttle: 0, steer: 0, brake: false, blade: 0.2, dig: false, dump: false };
+  const input: DriveInput = { throttle: 0, steer: 0, brake: false, raise: false, lower: false, dig: false, dump: false };
   let waterAt = 0;
+  let eHeld = 0;
+  let eFired = false;
+  const director = new Director(viewer, {
+    lon: basin.anchorLon,
+    lat: basin.anchorLat,
+    heading: 0.4,
+    pitch: -0.28,
+  });
+  const map = root.querySelector<HTMLCanvasElement>('#minimap')!;
 
   const list = root.querySelector('#site-list')!;
   const paintList = () => {
@@ -140,36 +151,78 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       });
     });
   };
-  const fly = (place: Place) => {
-    focus = place;
-    leave();
-    const span = place.context ? Math.max(place.context.widthM, place.context.heightM) : place.ground.widthM;
-    const scale = metersPerDegree(place.context ? place.context.south : place.ground.south);
-    const lat = place.context ? place.context.south + place.context.heightM / scale.lat / 2 : place.anchorLat;
-    const lon = place.context ? place.context.west + place.context.widthM / scale.lon / 2 : place.anchorLon;
-    const center = Cesium.Cartesian3.fromDegrees(lon, lat, place.context ? 400 : 180);
-    viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(center, span * 0.55), {
-      offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-40), span * 1.15),
-      duration: 2.2,
-    });
-    paintList();
+  const groundAt = (lon: number, lat: number): number => {
+    for (const place of places) {
+      const patch = place.ground;
+      const scale = metersPerDegree(patch.south);
+      const east = (lon - patch.west) * scale.lon;
+      const north = (lat - patch.south) * scale.lat;
+      if (east >= 0 && north >= 0 && east <= patch.widthM && north <= patch.heightM) return patch.field.sample(east, north);
+    }
+    for (const place of places) {
+      const patch = place.context;
+      if (!patch) continue;
+      const scale = metersPerDegree(patch.south);
+      const east = (lon - patch.west) * scale.lon;
+      const north = (lat - patch.south) * scale.lat;
+      if (east >= 0 && north >= 0 && east <= patch.widthM && north <= patch.heightM) return patch.field.sample(east, north);
+    }
+    return 0;
   };
-  const leave = () => {
-    active = null;
-    viewer.scene.screenSpaceCameraController.enableInputs = true;
+  const rigGeo = (place: Place, rig: Rig) => {
+    const pose = place.yard.pose(rig);
+    const at = offsetDegrees(place.ground.south, place.ground.west, pose.east, pose.north);
+    return { ...pose, lon: at.lon, lat: at.lat };
+  };
+  const siteAt = (lon: number, lat: number) => places.find((place) => {
+    const scale = metersPerDegree(place.ground.south);
+    const east = (lon - place.ground.west) * scale.lon;
+    const north = (lat - place.ground.south) * scale.lat;
+    return east >= 0 && north >= 0 && east <= place.ground.widthM && north <= place.ground.heightM;
+  }) ?? null;
+  const showView = () => {
+    root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
+      button.classList.toggle('active', button.dataset.view === director.view);
+    });
   };
   const enter = (rig: Rig) => {
     active = rig;
+    chosen = rig.kind;
     focus = places.find((place) => place.yard.rigs.includes(rig)) ?? focus;
-    viewer.scene.screenSpaceCameraController.enableInputs = false;
+    const geo = rigGeo(focus, rig);
+    director.anchor.lon = geo.lon;
+    director.anchor.lat = geo.lat;
+    if (director.view !== 'vehicle') {
+      previousView = director.view;
+      director.setView('vehicle');
+    }
     paintList();
+    showView();
+  };
+  const leave = () => {
+    active = null;
+    director.setView(previousView === 'vehicle' ? 'titan' : previousView);
+    showView();
+  };
+  const fly = (place: Place) => {
+    focus = place;
+    const scale = metersPerDegree(director.anchor.lat);
+    const east = (place.anchorLon - director.anchor.lon) * scale.lon;
+    const north = (place.anchorLat - director.anchor.lat) * scale.lat;
+    const distance = Math.hypot(east, north);
+    active = null;
+    director.anchor.lon = place.anchorLon;
+    director.anchor.lat = place.anchorLat;
+    director.anchor.pitch = -0.35;
+    previousView = 'titan';
+    director.setView('titan', distance > 6000 ? Math.min(distance * 0.22, 380_000) : 0);
+    paintList();
+    showView();
   };
 
   paintList();
-  viewer.camera.setView({
-    destination: Cesium.Cartesian3.fromDegrees(-96, 62, 6_800_000),
-    orientation: { heading: 0, pitch: Cesium.Math.toRadians(-58), roll: 0 },
-  });
+  showView();
+  director.step(0, groundAt, null);
 
   const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
   handler.setInputAction((event: { position: Cesium.Cartesian2 }) => {
@@ -180,11 +233,14 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
   root.querySelector('#drive-enter')?.addEventListener('click', () => {
-    if (active) leave();
+    if (director.view === 'vehicle') leave();
     else {
-      const rig = focus.yard.rigs[0];
+      const rig = focus.yard.rigs.find((item) => item.kind === chosen) ?? focus.yard.rigs[0];
       if (rig) enter(rig);
     }
+  });
+  root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
+    button.addEventListener('click', () => chooseView((button.dataset.view || 'titan') as ViewId));
   });
   root.querySelector('#drive-rain')?.addEventListener('click', () => {
     raindrops(focus.ground.field, 70);
@@ -211,47 +267,114 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     button.addEventListener('pointerup', up);
     button.addEventListener('pointerleave', up);
   });
+  const canvas = viewer.scene.canvas;
+  let dragging = false;
+  canvas.addEventListener('pointerdown', (ev) => {
+    if (director.view === 'titan' || director.view === 'sky') canvas.requestPointerLock?.();
+    dragging = true;
+    void ev;
+  });
+  canvas.addEventListener('pointerup', () => {
+    dragging = false;
+  });
+  canvas.addEventListener('pointermove', (ev) => {
+    if (!dragging && document.pointerLockElement !== canvas) return;
+    director.mouse(ev.movementX || 0, ev.movementY || 0, director.view);
+  });
+  canvas.addEventListener('wheel', (ev) => {
+    if (director.view === 'vehicle' && active) {
+      ev.preventDefault();
+      active.bladeAngle = Math.max(-0.7, Math.min(0.55, active.bladeAngle + (ev.deltaY > 0 ? -0.05 : 0.05)));
+    } else director.wheel(ev.deltaY);
+  }, { passive: false });
   window.addEventListener('keydown', (ev) => {
     keys.add(ev.key.toLowerCase());
-    if (ev.key === 'f') {
-      if (active) leave();
-      else {
-        const rig = focus.yard.rigs[0];
-        if (rig) enter(rig);
-      }
+    if (ev.key === '1') chooseView('orbit');
+    if (ev.key === '2') chooseView('titan');
+    if (ev.key === '3') chooseView('vehicle');
+    if (ev.key === '4') chooseView('sky');
+    if (ev.key === 'Escape') {
+      document.exitPointerLock?.();
+      if (director.view === 'vehicle') leave();
     }
-    if (ev.key === '1') enterKind(focus, 'dozer');
-    if (ev.key === '2') enterKind(focus, 'excavator');
-    if (ev.key === '3') enterKind(focus, 'hauler');
-    if (ev.key === 'Escape') leave();
   });
   window.addEventListener('keyup', (ev) => keys.delete(ev.key.toLowerCase()));
 
-  function enterKind(place: Place, kind: RigKind) {
-    const rig = place.yard.rigs.find((item) => item.kind === kind);
-    if (rig) enter(rig);
+  function chooseView(next: ViewId) {
+    if (next === 'vehicle') {
+      const rig = focus.yard.rigs.find((item) => item.kind === chosen) ?? focus.yard.rigs[0];
+      if (rig) enter(rig);
+      return;
+    }
+    if (director.view === 'vehicle') previousView = next;
+    active = null;
+    director.setView(next);
+    showView();
   }
 
   let last = performance.now();
-  let meshAt = 0;
   const loop = () => {
     const now = performance.now();
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     readInput();
-    const place = focus;
-    place.yard.step(dt, active && place.yard.rigs.includes(active) ? active : null, input);
-    if (place.ground.field.dirty && now - meshAt > 140) {
+    if (keys.has('e')) {
+      eHeld += dt;
+      if (!eFired && eHeld > 0.4) {
+        eFired = true;
+        if (director.view === 'vehicle') leave();
+        else {
+          const rig = focus.yard.rigs.find((item) => item.kind === chosen) ?? focus.yard.rigs[0];
+          if (rig) enter(rig);
+        }
+      }
+    } else {
+      eHeld = 0;
+      eFired = false;
+    }
+    if (director.view === 'titan' || director.view === 'sky') {
+      let throttle = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0);
+      const strafe = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
+      if (director.view === 'titan' && keys.has('shift')) throttle *= 1.7;
+      if (throttle || strafe) director.walk(dt, throttle, strafe, groundAt, director.view === 'titan');
+      const under = siteAt(director.anchor.lon, director.anchor.lat);
+      if (under) focus = under;
+    }
+    const driving = director.view === 'vehicle' && active && focus.yard.rigs.includes(active) ? active : null;
+    if (driving) focus.yard.step(dt, driving, input);
+    input.raise = false;
+    input.lower = false;
+    if (driving) {
+      const geo = rigGeo(focus, driving);
+      director.anchor.lon = geo.lon;
+      director.anchor.lat = geo.lat;
+      director.anchor.heading = geo.heading;
+    }
+    director.step(dt, groundAt, driving ? rigGeo(focus, driving) : null);
+    if (focus.ground.field.dirtyChunks.size) {
       if (now - waterAt > 1800) {
-        settleWater(place);
+        settleWater(focus);
         waterAt = now;
       }
-      refresh(viewer, place);
-      meshAt = now;
+      refresh(focus);
     }
     poseModels(drawn);
-    if (active) follow(viewer, place, active);
-    paint(place);
+    paint(focus);
+    drawMinimap(
+      map,
+      director.anchor,
+      places.map((place) => ({
+        name: place.name,
+        west: place.ground.west,
+        south: place.ground.south,
+        east: offsetDegrees(place.ground.south, place.ground.west, place.ground.widthM, 0).lon,
+        north: offsetDegrees(place.ground.south, place.ground.west, 0, place.ground.heightM).lat,
+      })),
+      focus.yard.rigs.map((rig) => {
+        const geo = rigGeo(focus, rig);
+        return { lon: geo.lon, lat: geo.lat };
+      }),
+    );
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
@@ -267,36 +390,46 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     sculpt: () => {
       const field = focus.ground.field;
       const before = field.cutM3;
-      focus.yard.step(1 / 30, focus.yard.rigs[0] ?? null, { throttle: 1, steer: 0, brake: false, blade: 1, dig: false, dump: false });
+      const rig = focus.yard.rigs[0];
+      if (rig) rig.bladeAngle = -0.45;
+      focus.yard.step(1 / 20, rig ?? null, { throttle: 1, steer: 0, brake: false, raise: false, lower: true, dig: false, dump: false });
       return { cut: field.cutM3 - before, fill: field.fillM3, held: focus.yard.held() };
     },
     volumes: () => ({ cut: focus.ground.field.cutM3, fill: focus.ground.field.fillM3, held: focus.yard.held() }),
+    setView: (id: ViewId) => chooseView(id),
+    view: () => director.view,
+    held: () => [...keys],
   };
 
   function readInput() {
     const pad = navigator.getGamepads?.()[0];
     const axis = pad ? pad.axes[0] || 0 : 0;
-    const accel = pad?.buttons[7]?.pressed || keys.has('w') || keys.has('arrowup');
-    const back = pad?.buttons[6]?.pressed || keys.has('s') || keys.has('arrowdown');
-    input.throttle = accel ? 1 : back ? -0.6 : 0;
-    input.steer = axis;
-    if (keys.has('a') || keys.has('arrowleft')) input.steer -= 0.7;
-    if (keys.has('d') || keys.has('arrowright')) input.steer += 0.7;
-    input.brake = keys.has(' ');
-    if (keys.has('q')) input.blade = Math.min(1.1, input.blade + 0.02);
-    if (keys.has('e')) input.blade = Math.max(0, input.blade - 0.02);
-    input.dig = keys.has('g');
-    input.dump = keys.has('t');
+    const driving = director.view === 'vehicle';
+    const accel = driving && (pad?.buttons[7]?.pressed || keys.has('w') || keys.has('arrowup'));
+    const back = driving && (pad?.buttons[6]?.pressed || keys.has('s') || keys.has('arrowdown'));
+    input.throttle = accel ? 1 : back ? -0.55 : 0;
+    input.steer = driving ? axis : 0;
+    if (driving && (keys.has('a') || keys.has('arrowleft'))) input.steer -= 0.85;
+    if (driving && (keys.has('d') || keys.has('arrowright'))) input.steer += 0.85;
+    input.brake = driving && keys.has(' ');
+    input.raise = driving && (keys.has('r') || Boolean(pad?.buttons[5]?.pressed));
+    input.lower = driving && (keys.has('f') || Boolean(pad?.buttons[4]?.pressed));
+    input.dig = driving && keys.has('g');
+    input.dump = driving && keys.has('t');
   }
 
   function paint(place: Place) {
-    const rig = active;
-    const field = place.ground.field;
-    const held = place.yard.held();
-    root.querySelector('#drive-read')!.textContent = rig
-      ? `${rig.label}  ${place.yard.pose(rig).speed.toFixed(0)} km/h  blade ${rig.blade.toFixed(2)} m  bucket ${rig.loadM3.toFixed(1)} m³`
-      : `${place.name}. Fly the globe, or press F to drive.`;
-    root.querySelector('#drive-volumes')!.textContent = `Cut ${Math.round(field.cutM3).toLocaleString('en-US')} m³   Fill ${Math.round(field.fillM3).toLocaleString('en-US')} m³   In machines ${held.toFixed(1)} m³`;
+    const rig = director.view === 'vehicle' ? active : null;
+    const names = { orbit: 'Orbit', titan: 'Titan', vehicle: 'Vehicle', sky: 'Sky' };
+    if (rig) {
+      const pose = place.yard.pose(rig);
+      const grade = place.yard.grade(rig);
+      const depth = place.yard.bladeDepth(rig);
+      root.querySelector('#drive-read')!.textContent = `${rig.label}  ${pose.speed.toFixed(0)} km/h  grade ${grade.toFixed(0)}°  blade ${((rig.bladeAngle * 180) / Math.PI).toFixed(0)}°  depth ${depth.toFixed(2)} m`;
+    } else {
+      root.querySelector('#drive-read')!.textContent = `${names[director.view]} · ${place.name}`;
+    }
+    root.querySelector('#drive-volumes')!.textContent = `Moved ${Math.round(place.ground.field.cutM3).toLocaleString('en-US')} m³   Fill ${Math.round(place.ground.field.fillM3).toLocaleString('en-US')} m³   In machines ${place.yard.held().toFixed(1)} m³`;
     root.querySelector('#drive-note')!.textContent = place.note;
   }
 }
@@ -321,29 +454,25 @@ function mirror(place: Place): void {
       const coreEast = (lon - core.west) * metersPerDegree(core.south).lon;
       const coreNorth = (latC - core.south) * metersPerDegree(core.south).lat;
       if (coreEast < 0 || coreNorth < 0 || coreEast > core.widthM || coreNorth > core.heightM) continue;
-      context.field.heights[context.field.index(c, r)] = core.field.sample(coreEast, coreNorth);
+      const sample = core.field.sample(coreEast, coreNorth);
+      const i = context.field.index(c, r);
+      if (Math.abs((context.field.heights[i] ?? 0) - sample) > 0.2) {
+        context.field.heights[i] = sample;
+        context.field.mark(i);
+      }
     }
   }
   context.field.dirty = true;
 }
 
 function mount(viewer: Cesium.Viewer, patch: Patch): void {
-  if (patch.parts) {
-    viewer.scene.primitives.remove(patch.parts.primitive);
-    if (patch.parts.water) viewer.scene.primitives.remove(patch.parts.water);
-  }
-  if (patch.skirt) viewer.scene.primitives.remove(patch.skirt);
-  patch.parts = terrainPrimitive(patch.field, patch.west, patch.south, patch.depth);
-  viewer.scene.primitives.add(patch.parts.primitive);
-  if (patch.parts.water) viewer.scene.primitives.add(patch.parts.water);
-  patch.skirt = skirtPrimitive(patch.field, patch.west, patch.south);
-  viewer.scene.primitives.add(patch.skirt);
-  patch.field.dirty = false;
+  patch.layer = new ChunkLayer(viewer, patch.field, patch.west, patch.south, patch.depth);
 }
 
-function refresh(viewer: Cesium.Viewer, place: Place): void {
-  mount(viewer, place.ground);
-  if (place.context?.field.dirty) mount(viewer, place.context);
+function refresh(place: Place): void {
+  place.ground.layer?.setDepth(place.ground.depth);
+  place.ground.layer?.flush(4);
+  place.context?.layer?.flush(2);
 }
 
 function poseModels(drawn: { place: Place; rig: Rig; model: Cesium.Model }[]): void {
@@ -403,7 +532,7 @@ async function loadBasin(base: string): Promise<Place> {
     note: 'Northern Canada. The measured 4 km surface. Cut soil is pushed ahead, or held in a bucket until you dump it.',
     anchorLat: meta.center_wgs84.lat,
     anchorLon: meta.center_wgs84.lon,
-    ground: { field, west: sw.lon, south: sw.lat, widthM, heightM: widthM, depth: new Float32Array(heights.length), parts: null, skirt: null },
+    ground: { field, west: sw.lon, south: sw.lat, widthM, heightM: widthM, depth: new Float32Array(heights.length), layer: null },
     context: null,
     yard,
   };
@@ -462,7 +591,7 @@ async function loadRing(base: string): Promise<Place> {
     note: 'Measured research terrain in the Nitassinan of the Innu of Pessamit. The ring is an emblem of the O, not a claim on the land. Machines here are a simulation.',
     anchorLat: anchor.lat,
     anchorLon: anchor.lon,
-    ground: { field, west: sw.lon, south: sw.lat, widthM: coreW, heightM: coreW, depth: new Float32Array(coreHeights.length), parts: null, skirt: null },
+    ground: { field, west: sw.lon, south: sw.lat, widthM: coreW, heightM: coreW, depth: new Float32Array(coreHeights.length), layer: null },
     context: {
       field: context,
       west: bounds.west,
@@ -470,8 +599,7 @@ async function loadRing(base: string): Promise<Place> {
       widthM,
       heightM,
       depth: contextDepth,
-      parts: null,
-      skirt: null,
+      layer: null,
     },
     yard,
   };
@@ -513,12 +641,17 @@ function markup(): string {
       <div class="group">Sites</div>
       <div id="site-list"></div>
       <div class="group">Machines</div>
-      <p class="peers">1 mass mover. 2 excavator. 3 hauler.</p>
-      <p class="peers">F gets in. Esc gets out. WASD or a gamepad drives. Q lowers the blade, E raises it. G digs. T dumps.</p>
+      <p class="peers">Hold E to enter or leave a machine. WASD or a gamepad drives. R raises the blade, F lowers it. G digs. T dumps. Shift is a longer Titan stride.</p>
       <button id="drive-rain" class="tool" type="button">Rain on this ground</button>
       <button id="drive-reset" class="tool" type="button">Reset to measured</button>
     </aside>
     <aside class="inspector">
+      <div class="views" role="group" aria-label="View">
+        <button type="button" data-view="orbit">Orbit <i>1</i></button>
+        <button type="button" data-view="titan" class="active">Titan <i>2</i></button>
+        <button type="button" data-view="vehicle">Vehicle <i>3</i></button>
+        <button type="button" data-view="sky">Sky <i>4</i></button>
+      </div>
       <div class="kicker">This ground</div>
       <p class="status" id="drive-status"></p>
       <p class="peers" id="drive-note"></p>
@@ -528,12 +661,14 @@ function markup(): string {
         <button type="button" data-hold="s">Back</button>
         <button type="button" data-hold="a">Left</button>
         <button type="button" data-hold="d">Right</button>
-        <button type="button" data-hold="q">Blade down</button>
+        <button type="button" data-hold="f">Blade down</button>
+        <button type="button" data-hold="r">Blade up</button>
         <button type="button" data-hold=" ">Brake</button>
         <button type="button" data-hold="g">Dig</button>
         <button type="button" data-hold="t">Dump</button>
       </div>
     </aside>
+    <canvas id="minimap" class="minimap" width="168" height="168"></canvas>
     <dialog id="credits">
       <button class="close" data-close type="button">Close</button>
       <h2>Credits</h2>

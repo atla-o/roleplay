@@ -38,13 +38,18 @@ export function pushBlade(field: Field, east: number, north: number, heading: nu
   for (const i of under) {
     field.heights[i] = (field.heights[i] ?? 0) - dh;
     field.channel[i] = 1;
+    field.mark(i);
     moved += dh * area;
   }
   if (moved <= 0) return 0;
   const ahead = cellsIn(field, east + fx * field.spacing * 2.1, north + fn * field.spacing * 2.1, field.spacing * 0.85, Math.max(width / 2, field.spacing * 0.7), fx, fn);
   const pile = ahead.length ? ahead : under;
   const lift = moved / (pile.length * area);
-  for (const i of pile) field.heights[i] = (field.heights[i] ?? 0) + lift;
+  for (const i of pile) {
+    field.heights[i] = (field.heights[i] ?? 0) + lift;
+    field.mark(i);
+  }
+  slump(field, pile);
   field.cutM3 += moved;
   field.fillM3 += moved;
   field.dirty = true;
@@ -69,6 +74,7 @@ export function digBucket(field: Field, east: number, north: number, radius: num
       const i = field.index(c, r);
       field.heights[i] = (field.heights[i] ?? 0) - dh;
       field.channel[i] = 1;
+      field.mark(i);
       moved += dh * area;
     }
   }
@@ -93,7 +99,11 @@ export function dumpLoad(field: Field, east: number, north: number, volume: numb
   }
   if (!cells.length) return 0;
   const lift = volume / (cells.length * area);
-  for (const i of cells) field.heights[i] = (field.heights[i] ?? 0) + lift;
+  for (const i of cells) {
+    field.heights[i] = (field.heights[i] ?? 0) + lift;
+    field.mark(i);
+  }
+  slump(field, cells);
   field.fillM3 += volume;
   field.dirty = true;
   return volume;
@@ -137,11 +147,13 @@ export function raindrops(field: Field, count: number): void {
       if (sediment > capacity) {
         const drop = Math.min(sediment - capacity, sediment) * 0.35;
         field.heights[here] = height + drop;
+        field.mark(here);
         sediment -= drop;
         field.fillM3 += drop * area;
       } else if (slope > 0) {
         const take = Math.min((capacity - sediment) * 0.35, slope * 0.25, height * 0.02);
         field.heights[here] = height - take;
+        field.mark(here);
         sediment += take;
         field.cutM3 += take * area;
         field.channel[here] = 1;
@@ -154,9 +166,72 @@ export function raindrops(field: Field, count: number): void {
     if (sediment > 0) {
       const here = field.index(c, r);
       field.heights[here] = (field.heights[here] ?? 0) + sediment;
+      field.mark(here);
       field.fillM3 += sediment * area;
       sediment = 0;
     }
   }
   field.dirty = true;
+}
+
+/** Move soil from too-steep neighbours until the face is near 34°, keeping the volume. */
+function slump(field: Field, seeds: number[]): void {
+  const slope = Math.tan((34 * Math.PI) / 180);
+  const area = field.spacing * field.spacing;
+  let open = seeds.slice(0, 48);
+  for (let pass = 0; pass < 3; pass++) {
+    const next: number[] = [];
+    for (const i of open) {
+      const c = i % field.cols;
+      const r = (i / field.cols) | 0;
+      const h = field.heights[i] ?? 0;
+      for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        if (!field.contains(c + dc, r + dr)) continue;
+        const j = field.index(c + dc, r + dr);
+        const other = field.heights[j] ?? 0;
+        const excess = h - other - slope * field.spacing;
+        if (excess <= 0.05) continue;
+        const shift = excess * 0.35;
+        field.heights[i] = (field.heights[i] ?? 0) - shift;
+        field.heights[j] = other + shift;
+        field.mark(i);
+        field.mark(j);
+        field.cutM3 += shift * area;
+        field.fillM3 += shift * area;
+        next.push(j);
+      }
+    }
+    open = next;
+  }
+}
+
+/** Plane every cell under the blade down to an absolute elevation and push that soil ahead. */
+export function planeBlade(field: Field, east: number, north: number, heading: number, width: number, edgeY: number): number {
+  const fx = Math.sin(heading);
+  const fn = Math.cos(heading);
+  const area = field.spacing * field.spacing;
+  const under = cellsIn(field, east, north, field.spacing * 0.85, Math.max(width / 2, field.spacing * 0.7), fx, fn);
+  let moved = 0;
+  for (const i of under) {
+    const h = field.heights[i] ?? 0;
+    if (h <= edgeY + 0.02) continue;
+    const dh = Math.min(h - edgeY, 0.45);
+    field.heights[i] = h - dh;
+    field.channel[i] = 1;
+    field.mark(i);
+    moved += dh * area;
+  }
+  if (moved <= 0) return 0;
+  const ahead = cellsIn(field, east + fx * field.spacing * 2.1, north + fn * field.spacing * 2.1, field.spacing * 0.85, Math.max(width / 2, field.spacing * 0.7), fx, fn);
+  const pile = ahead.length ? ahead : under;
+  const lift = moved / (pile.length * area);
+  for (const i of pile) {
+    field.heights[i] = (field.heights[i] ?? 0) + lift;
+    field.mark(i);
+  }
+  slump(field, pile);
+  field.cutM3 += moved;
+  field.fillM3 += moved;
+  field.dirty = true;
+  return moved;
 }

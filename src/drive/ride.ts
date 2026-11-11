@@ -234,7 +234,7 @@ export class Yard {
   private work(rig: Rig, input: DriveInput, dt: number, pose: ReturnType<Yard['pose']>, spec: (typeof SPECS)[RigKind]): void {
     if (input.raise) rig.bladeAngle = Math.min(0.6, rig.bladeAngle + dt * 1.4);
     if (input.lower) rig.bladeAngle = Math.max(-0.75, rig.bladeAngle - dt * 1.4);
-    if (rig.kind === 'dozer' && rig.bladeAngle < -0.04 && Math.abs(pose.speed) > 0.4) {
+    if (rig.kind === 'dozer' && rig.bladeAngle < -0.04 && Math.abs(pose.speed) > 1) {
       const depth = -Math.sin(rig.bladeAngle) * 1.15;
       if (this.sculpt) {
         this.sculpt(pose.east + Math.sin(pose.heading) * (spec.length / 2 + 1.2), pose.north + Math.cos(pose.heading) * (spec.length / 2 + 1.2), pose.heading, spec.width, depth);

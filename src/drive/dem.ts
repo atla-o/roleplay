@@ -25,6 +25,8 @@ export class Relief {
   private readonly pending = new Set<string>();
   private readonly missing = new Set<string>();
   private readonly meshes = new Map<string, Cesium.Primitive>();
+  private step = 8;
+  private exaggeration = 1;
 
   constructor(
     private readonly base: string,
@@ -43,6 +45,15 @@ export class Relief {
     return this.sampleZoom(lon, lat, 3);
   }
 
+  /** Low uses a coarser mesh. Exaggeration is Titan-only and rebuilds the tiles. */
+  configure(step: number, exaggeration: number): void {
+    if (step === this.step && exaggeration === this.exaggeration) return;
+    this.step = step;
+    this.exaggeration = exaggeration;
+    for (const mesh of this.meshes.values()) this.viewer.scene.primitives.remove(mesh);
+    this.meshes.clear();
+  }
+
   /** Keep a few tiles of mesh around the viewer. Measured sites are left as holes. */
   update(lon: number, lat: number, holes: LonBox[]): void {
     const wanted = new Set<string>();
@@ -56,7 +67,7 @@ export class Relief {
       if (!heights) continue;
       wanted.add(id);
       if (!this.meshes.has(id)) {
-        const mesh = tileMesh(tile.z, tile.x, tile.y, heights, holes);
+        const mesh = tileMesh(tile.z, tile.x, tile.y, heights, holes, this.step, this.exaggeration);
         if (mesh) {
           this.viewer.scene.primitives.add(mesh);
           this.meshes.set(id, mesh);
@@ -176,8 +187,7 @@ function inside(lon: number, lat: number, box: LonBox): boolean {
   return lon >= box.west && lon <= box.east && lat >= box.south && lat <= box.north;
 }
 
-function tileMesh(z: number, x: number, y: number, heights: Float32Array, holes: LonBox[]): Cesium.Primitive | null {
-  const step = z >= 5 ? 4 : 8;
+function tileMesh(z: number, x: number, y: number, heights: Float32Array, holes: LonBox[], step: number, exaggeration: number): Cesium.Primitive | null {
   const positions: number[] = [];
   const index: number[] = [];
   const stride = Math.floor(256 / step) + 1;
@@ -186,7 +196,7 @@ function tileMesh(z: number, x: number, y: number, heights: Float32Array, holes:
       const clampedX = Math.min(255, px);
       const clampedY = Math.min(255, py);
       const { lon, lat } = lonLatOf(z, x, y, clampedX, clampedY);
-      const h = Math.max(0, heights[clampedY * 256 + clampedX] ?? 0);
+      const h = Math.max(0, heights[clampedY * 256 + clampedX] ?? 0) * exaggeration;
       const cart = Cesium.Cartesian3.fromDegrees(lon, lat, h);
       positions.push(cart.x, cart.y, cart.z);
     }

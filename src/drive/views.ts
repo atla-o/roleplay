@@ -3,9 +3,9 @@ import { metersPerDegree, offsetDegrees } from './field';
 
 export type ViewId = 'orbit' | 'titan' | 'vehicle' | 'sky';
 
-/** 750× a person. Eye height makes a few hundred metres of relief read as hills. */
-export const GIANT = 750;
-export const EYE_M = 1.7 * GIANT;
+/** 550× a person. Eye height is 1.65 m times that, and the stride is a walking pace times that. */
+export const GIANT = 550;
+export const EYE_M = 1.65 * GIANT;
 
 export interface Anchor {
   lon: number;
@@ -35,6 +35,9 @@ export class Director {
   view: ViewId = 'titan';
   orbitYaw = 0;
   orbitPitch = -0.55;
+  /** Chase-only orbit. It does not keep the Orbit view's angle. */
+  private chaseYaw = 0;
+  private chasePitch = 0;
   orbitRange = 9000;
   mouseIdle = 10;
   private blend = 1;
@@ -64,8 +67,8 @@ export class Director {
       return;
     }
     if (view === 'vehicle') {
-      this.orbitYaw += yaw;
-      this.orbitPitch = Math.max(-0.8, Math.min(0.45, this.orbitPitch - pitch));
+      this.chaseYaw += yaw;
+      this.chasePitch = Math.max(-0.45, Math.min(0.35, this.chasePitch - pitch));
       return;
     }
     this.anchor.heading += yaw;
@@ -92,12 +95,16 @@ export class Director {
     this.blendDur = arc > 0 ? 1.15 : 0.8;
     this.arc = arc;
     if (next !== 'vehicle') this.orbitYaw = 0;
-    if (next === 'vehicle') this.snap = true;
+    if (next === 'vehicle') {
+      this.chaseYaw = 0;
+      this.chasePitch = 0;
+      this.snap = true;
+    }
   }
 
   /** Move the giant or the sky camera across the same ground. Returns false if the slope is too steep. */
   walk(dt: number, throttle: number, strafe: number, ground: (lon: number, lat: number) => number, giant: boolean): void {
-    const speed = (giant ? 1.55 * GIANT : 70) * (Math.abs(throttle) > 1 ? 1 : 1);
+    const speed = (giant ? 1.4 * GIANT : 70) * (Math.abs(throttle) > 1 ? 1 : 1);
     const sprint = Math.abs(throttle) > 1.2 ? 1.65 : 1;
     const dist = speed * sprint * dt;
     const heading = this.anchor.heading;
@@ -117,7 +124,7 @@ export class Director {
   step(dt: number, groundAt: (lon: number, lat: number) => number, vehicle: VehiclePose | null): void {
     this.mouseIdle += dt;
     if (this.view === 'vehicle' && this.mouseIdle > 1.5) {
-      this.orbitYaw += (0 - this.orbitYaw) * (1 - Math.exp(-dt / 0.35));
+      this.chaseYaw += (0 - this.chaseYaw) * (1 - Math.exp(-dt / 0.35));
     }
     const ground = groundAt(this.anchor.lon, this.anchor.lat);
     const target = this.targetShot(ground, vehicle, groundAt);
@@ -166,9 +173,9 @@ export class Director {
     const pose = vehicle ?? { lon: this.anchor.lon, lat: this.anchor.lat, up: ground + 1.6, heading: this.anchor.heading, speed: 0 };
     const floor = groundAt(pose.lon, pose.lat);
     const base = Math.max(floor + 1.15, Math.min(floor + 3.2, pose.up));
-    const yaw = pose.heading + this.orbitYaw;
+    const yaw = pose.heading + this.chaseYaw;
     const back = 12;
-    const above = 4 + Math.max(-1.2, Math.min(1.5, this.orbitPitch));
+    const above = 4 + this.chasePitch * 2;
     const wantE = -Math.sin(yaw) * back;
     const wantN = -Math.cos(yaw) * back;
     if (this.snap) {
@@ -184,9 +191,9 @@ export class Director {
       this.camN = damp(this.camN, wantN, this.velN, 0.28, 1 / 60, (v) => { this.velN = v; });
       this.camU = damp(this.camU, above, this.velU, 0.28, 1 / 60, (v) => { this.velU = v; });
     }
-    const lookE = Math.sin(pose.heading) * 3;
-    const lookN = Math.cos(pose.heading) * 3;
-    const lookU = base + 1.1;
+    const lookE = Math.sin(pose.heading) * 5;
+    const lookN = Math.cos(pose.heading) * 5;
+    const lookU = base + 1.4;
     const pulled = this.pullIn(pose, lookE, lookN, lookU, this.camE, this.camN, base + this.camU, groundAt);
     let camE = lookE + (this.camE - lookE) * pulled;
     let camN = lookN + (this.camN - lookN) * pulled;
@@ -228,7 +235,7 @@ export class Director {
       const at = offsetDegrees(pose.lat, pose.lon, e, n);
       const ground = groundAt(at.lon, at.lat);
       const line = lookU + (camU - lookU) * t;
-      if (line < ground + 0.45) limit = Math.min(limit, Math.max(0.45, (s - 1) / 8));
+      if (line < ground + 0.35) limit = Math.min(limit, Math.max(0.82, (s - 1) / 8));
     }
     return limit;
   }
@@ -284,8 +291,9 @@ export function drawMinimap(
           if (height != null) {
             const east = sample(lonE, lat);
             const north = sample(lon, latN);
-            const slope = (east ?? height) - height + ((north ?? height) - height);
-            const light = Math.max(-18, Math.min(22, -slope * 1.4));
+            const riseE = east == null ? 0 : Math.max(-12, Math.min(12, east - height));
+            const riseN = north == null ? 0 : Math.max(-12, Math.min(12, north - height));
+            const light = Math.max(-16, Math.min(18, -(riseE + riseN) * 0.7));
             const t = Math.max(0, Math.min(1, (height - (mid - 40)) / 110));
             r = Math.max(0, Math.min(255, 92 + t * 120 + light));
             gv = Math.max(0, Math.min(255, 78 + t * 96 + light));

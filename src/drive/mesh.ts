@@ -146,7 +146,10 @@ export class ChunkLayer {
       const r0 = Number(rs) * this.field.chunk;
       const previous = this.chunks.get(key);
       if (previous) this.viewer.scene.primitives.remove(previous);
-      const next = chunkPrimitive(this.field, this.west, this.south, c0, r0, this.hole, chunkFade(this.field, c0, r0));
+      const fade = chunkFade(this.field, c0, r0);
+      const next = fade < 1
+        ? fringeChunk(this.field, this.west, this.south, c0, r0, this.hole)
+        : chunkPrimitive(this.field, this.west, this.south, c0, r0, this.hole, 1);
       if (next) {
         this.viewer.scene.primitives.add(next);
         this.chunks.set(key, next);
@@ -167,6 +170,40 @@ export class ChunkLayer {
     this.waterDirty = false;
     this.waterAt = now;
   }
+}
+
+function valueNoise(east: number, north: number): number {
+  const s = 220;
+  const x = east / s;
+  const y = north / s;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const tx = x - x0;
+  const ty = y - y0;
+  const h = (ix: number, iy: number) => {
+    const n = Math.sin(ix * 127.1 + iy * 311.7) * 43758.5453;
+    return n - Math.floor(n);
+  };
+  const sx = tx * tx * (3 - 2 * tx);
+  const sy = ty * ty * (3 - 2 * ty);
+  const a = h(x0, y0) * (1 - sx) + h(x0 + 1, y0) * sx;
+  const b = h(x0, y0 + 1) * (1 - sx) + h(x0 + 1, y0 + 1) * sx;
+  return a * (1 - sy) + b * sy;
+}
+
+/** Alpha that dies out along valleys and ridges, not along the rectangle. */
+function fringeAlpha(field: Field, east: number, north: number): number {
+  const width = (field.cols - 1) * field.spacing;
+  const height = (field.rows - 1) * field.spacing;
+  const ox = Math.max(-east, 0, east - width);
+  const oy = Math.max(-north, 0, north - height);
+  const outside = Math.hypot(ox, oy);
+  const inside = Math.min(east, north, width - east, height - north);
+  const dist = east >= 0 && north >= 0 && east <= width && north <= height ? -inside : outside;
+  const slope = Math.abs(field.sample(Math.max(0, east), Math.max(0, north)) - field.sample(Math.max(0, east + field.spacing), Math.max(0, north))) / field.spacing;
+  const wobble = (valueNoise(east, north) - 0.5) * 1300 + Math.min(slope, 0.4) * 700;
+  const t = Math.max(0, Math.min(1, (dist + 500 + wobble) / 1600));
+  return 1 - t * t * (3 - 2 * t);
 }
 
 function chunkFade(field: Field, c0: number, r0: number): number {
@@ -300,5 +337,67 @@ function apronPrimitive(field: Field, west: number, south: number, outside: (eas
   corner(width, 0, Math.PI * 1.5, Math.PI * 2, displayHeight(field, cols - 1, 0));
   corner(width, height, 0, Math.PI * 0.5, displayHeight(field, cols - 1, rows - 1));
   corner(0, height, Math.PI * 0.5, Math.PI, displayHeight(field, 0, rows - 1));
-  return primitive(new Float64Array(positions), index, Cesium.Color.fromCssColorString('#c8c2b4').withAlpha(0.42), true);
+  return primitive(new Float64Array(positions), index, Cesium.Color.fromCssColorString('#c8c2b4').withAlpha(0.18), true);
+}
+
+/** Outer posts as small patches whose alpha follows the noisy terrain mask. */
+function fringeChunk(field: Field, west: number, south: number, c0: number, r0: number, hole: CoverHole | null): Cesium.Primitive | null {
+  const c1 = Math.min(field.cols - 1, c0 + field.chunk);
+  const r1 = Math.min(field.rows - 1, r0 + field.chunk);
+  const instances: Cesium.GeometryInstance[] = [];
+  const step = 4;
+  for (let r = r0; r < r1; r += step) {
+    for (let c = c0; c < c1; c += step) {
+      const midE = (c + step / 2) * field.spacing;
+      const midN = (r + step / 2) * field.spacing;
+      if (hole && midE > hole.east && midN > hole.north && midE < hole.east + hole.width && midN < hole.north + hole.height) continue;
+      const alpha = fringeAlpha(field, midE, midN);
+      if (alpha < 0.05) continue;
+      const positions: number[] = [];
+      const index: number[] = [];
+      const cc1 = Math.min(c1, c + step);
+      const rr1 = Math.min(r1, r + step);
+      const stride = cc1 - c + 1;
+      for (let rr = r; rr <= rr1; rr++) {
+        for (let cc = c; cc <= cc1; cc++) {
+          writeVertex(west, south, cc * field.spacing, rr * field.spacing, displayHeight(field, cc, rr), positions);
+        }
+      }
+      for (let rr = r; rr < rr1; rr++) {
+        for (let cc = c; cc < cc1; cc++) {
+          const i = (rr - r) * stride + (cc - c);
+          index.push(i, i + 1, i + stride, i + 1, i + stride + 1, i + stride);
+        }
+      }
+      if (!index.length) continue;
+      const geometry = new Cesium.Geometry({
+        attributes: {
+          position: new Cesium.GeometryAttribute({
+            componentDatatype: Cesium.ComponentDatatype.DOUBLE,
+            componentsPerAttribute: 3,
+            values: new Float64Array(positions),
+          }),
+        } as Cesium.GeometryAttributes,
+        indices: new Uint16Array(index),
+        primitiveType: Cesium.PrimitiveType.TRIANGLES,
+        boundingSphere: Cesium.BoundingSphere.fromVertices(positions),
+      });
+      Cesium.GeometryPipeline.computeNormal(geometry);
+      instances.push(new Cesium.GeometryInstance({
+        geometry,
+        attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.fromCssColorString('#d2c0a4').withAlpha(alpha)) },
+      }));
+    }
+  }
+  if (!instances.length) return null;
+  return new Cesium.Primitive({
+    geometryInstances: instances,
+    appearance: new Cesium.PerInstanceColorAppearance({
+      flat: false,
+      translucent: true,
+      closed: false,
+      renderState: { cull: { enabled: false }, depthTest: { enabled: true }, depthMask: false },
+    }),
+    asynchronous: true,
+  });
 }

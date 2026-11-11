@@ -84,14 +84,20 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   viewer.scene.fog.minimumBrightness = 0.08;
   viewer.scene.globe.showGroundAtmosphere = true;
   viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
-  viewer.imageryLayers.addImageryProvider(
-    new Cesium.UrlTemplateImageryProvider({
-      url: 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/g/{z}/{y}/{x}.jpg',
-      tilingScheme: new Cesium.WebMercatorTilingScheme(),
-      maximumLevel: 13,
-      credit: 'Sentinel-2 cloudless by EOX (CC BY 4.0), modified Copernicus Sentinel data 2021',
-    }),
-  );
+  viewer.shadows = false;
+  const setImagery = (level: number) => {
+    const layers = viewer.imageryLayers;
+    while (layers.length > 1) layers.remove(layers.get(layers.length - 1));
+    layers.addImageryProvider(
+      new Cesium.UrlTemplateImageryProvider({
+        url: 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/g/{z}/{y}/{x}.jpg',
+        tilingScheme: new Cesium.WebMercatorTilingScheme(),
+        maximumLevel: level,
+        credit: 'Sentinel-2 cloudless by EOX (CC BY 4.0), modified Copernicus Sentinel data 2021',
+      }),
+    );
+  };
+  setImagery(9);
 
   const status = root.querySelector('#drive-status')!;
   status.textContent = 'Reading the measured ground';
@@ -200,10 +206,14 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   };
   const openDetail = (place: Place, east: number, north: number) => {
     if (detailPlace && detailPlace !== place) closeDetail();
-    if (!detail || !fine) {
+    if (!detail) {
       detail = new Detail(place.ground.field);
-      fine = new FineLayer(viewer, place.ground.west, place.ground.south, detail);
       detailPlace = place;
+    }
+    if (quality !== 'low' && !fine) fine = new FineLayer(viewer, place.ground.west, place.ground.south, detail);
+    if (quality === 'low' && fine) {
+      fine.destroy();
+      fine = null;
     }
     detail.follow(east, north);
     place.yard.surface = (sampleE, sampleN) => detail?.sample(sampleE, sampleN) ?? place.ground.field.sample(sampleE, sampleN);
@@ -227,6 +237,40 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     }
     text.textContent = COACH[view] ?? '';
     card.hidden = false;
+  };
+  type QualityName = 'low' | 'medium' | 'high';
+  let qualityChoice: 'auto' | QualityName = 'auto';
+  let quality: QualityName = 'medium';
+  let titanExag = false;
+  const frameMs: number[] = [];
+  const applyQuality = (name: QualityName) => {
+    quality = name;
+    viewer.resolutionScale = name === 'low' ? 0.5 : name === 'medium' ? 0.75 : 1;
+    viewer.scene.globe.enableLighting = name === 'high';
+    viewer.scene.fog.enabled = name !== 'low';
+    viewer.scene.globe.showGroundAtmosphere = name !== 'low';
+    viewer.shadows = false;
+    dust.enabled = name !== 'low';
+    setImagery(name === 'low' ? 6 : name === 'medium' ? 9 : 13);
+    relief.configure(name === 'low' ? 16 : name === 'high' ? 4 : 8, titanExag && director.view === 'titan' ? 2.5 : 1);
+    if (name === 'low' && fine) {
+      fine.destroy();
+      fine = null;
+    }
+  };
+  const viewGround = (lon: number, lat: number) => {
+    const h = groundAt(lon, lat);
+    if (!titanExag || director.view !== 'titan') return h;
+    if (reliefAt(lon, lat) != null) return h;
+    return h * 2.5;
+  };
+  const mapSample = (lon: number, lat: number): number | null => {
+    const measured = reliefAt(lon, lat);
+    if (measured != null) return measured;
+    const samples = [0, 0.002, -0.002].map((shift) => relief.sample(lon + shift, lat)).filter((value): value is number => value != null && Number.isFinite(value));
+    if (!samples.length) return null;
+    samples.sort((a, b) => a - b);
+    return samples[samples.length >> 1];
   };
   const rigGeo = (place: Place, rig: Rig) => {
     const pose = place.yard.pose(rig);
@@ -321,6 +365,15 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     } catch {
       /* private mode */
     }
+  });
+  root.querySelector<HTMLSelectElement>('#quality')?.addEventListener('change', (ev) => {
+    const value = (ev.target as HTMLSelectElement).value;
+    qualityChoice = value === 'low' || value === 'medium' || value === 'high' ? value : 'auto';
+    applyQuality(qualityChoice === 'auto' ? 'medium' : qualityChoice);
+  });
+  root.querySelector<HTMLInputElement>('#titan-exag')?.addEventListener('change', (ev) => {
+    titanExag = (ev.target as HTMLInputElement).checked;
+    relief.configure(quality === 'low' ? 16 : quality === 'high' ? 4 : 8, titanExag && director.view === 'titan' ? 2.5 : 1);
   });
   root.querySelector<HTMLInputElement>('#sound-toggle')?.addEventListener('change', (ev) => {
     const on = (ev.target as HTMLInputElement).checked;
@@ -420,7 +473,7 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       let throttle = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0);
       const strafe = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
       if (director.view === 'titan' && keys.has('shift')) throttle *= 1.7;
-      if (throttle || strafe) director.walk(dt, throttle, strafe, groundAt, director.view === 'titan');
+      if (throttle || strafe) director.walk(dt, throttle, strafe, viewGround, director.view === 'titan');
       const under = siteAt(director.anchor.lon, director.anchor.lat);
       if (under) focus = under;
     }
@@ -430,7 +483,7 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       const pose = focus.yard.pose(driving);
       openDetail(focus, pose.east, pose.north);
       focus.yard.step(dt, driving, input);
-      fine?.flush(director.blending ? 6 : 2);
+      if (quality !== 'low') fine?.flush(director.blending ? 4 : 1);
       if (focus.ground.field.cutM3 > cutBefore + 0.02) {
         const at = offsetDegrees(focus.ground.south, focus.ground.west, pose.east + Math.sin(pose.heading) * 4, pose.north + Math.cos(pose.heading) * 4);
         dust.puff(at.lon, at.lat, pose.up + 0.6);
@@ -446,7 +499,19 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       director.anchor.lat = geo.lat;
       director.anchor.heading = geo.heading;
     }
-    director.step(elapsed, groundAt, driving ? rigGeo(focus, driving) : null);
+    director.step(elapsed, viewGround, driving ? rigGeo(focus, driving) : null);
+    frameMs.push(elapsed * 1000);
+    if (frameMs.length > 40) frameMs.shift();
+    const frameAvg = frameMs.reduce((sum, value) => sum + value, 0) / frameMs.length;
+    if (qualityChoice === 'auto' && quality !== 'low' && frameMs.length > 24 && frameAvg > 33) {
+      qualityChoice = 'low';
+      const select = root.querySelector<HTMLSelectElement>('#quality');
+      if (select) select.value = 'low';
+      applyQuality('low');
+    }
+    relief.configure(quality === 'low' ? 16 : quality === 'high' ? 4 : 8, titanExag && director.view === 'titan' ? 2.5 : 1);
+    const fps = root.querySelector('#fps');
+    if (fps) fps.textContent = `${Math.round(1000 / Math.max(frameAvg, 1))} fps`;
     const dirty = focus.ground.field.dirtyChunks.size + (focus.context?.field.dirtyChunks.size ?? 0);
     if (dirty) {
       if (sculptIdle > 2.5 && now - waterAt > 4000) {
@@ -494,7 +559,7 @@ export async function startWorld(root: HTMLElement): Promise<void> {
         const geo = rigGeo(place, rig);
         return { lon: geo.lon, lat: geo.lat };
       })),
-      reliefAt,
+      mapSample,
       Math.round(focus.ground.field.cutM3),
     );
     requestAnimationFrame(loop);
@@ -619,7 +684,8 @@ function poseModels(drawn: { place: Place; rig: Rig; model: Cesium.Model }[]): v
     const altitude = Math.max(ground + 0.05, Math.min(ground + 3.2, pose.up - 0.9));
     const at = offsetDegrees(place.ground.south, place.ground.west, pose.east, pose.north);
     const position = Cesium.Cartesian3.fromDegrees(at.lon, at.lat, altitude);
-    const rotation = Cesium.Transforms.headingPitchRollQuaternion(position, new Cesium.HeadingPitchRoll(pose.heading, 0, 0));
+    // The glTF faces +Z. Cesium lays that axis east at heading 0, so turn it onto the chassis heading.
+    const rotation = Cesium.Transforms.headingPitchRollQuaternion(position, new Cesium.HeadingPitchRoll(pose.heading - Math.PI / 2, 0, 0));
     model.modelMatrix = Cesium.Matrix4.fromTranslationQuaternionRotationScale(position, rotation, new Cesium.Cartesian3(4.2, 4.2, 4.2));
   }
 }
@@ -811,6 +877,16 @@ function markup(): string {
       <h3>Hands</h3>
       <p>Titan and Sky use WASD and the mouse. Shift lengthens a Titan stride. In a machine, R raises the blade and F or the wheel lowers it. G digs, T dumps, Space brakes.</p>
       <label class="peers"><input id="sound-toggle" type="checkbox"> Engine and tracks</label>
+      <label class="peers">Quality
+        <select id="quality">
+          <option value="auto">Auto</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+        <span id="fps"></span>
+      </label>
+      <label class="peers"><input id="titan-exag" type="checkbox"> Exaggerate Titan relief (not to scale)</label>
     </dialog>
     <dialog id="credits">
       <button class="close" data-close type="button">Close</button>

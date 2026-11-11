@@ -60,6 +60,7 @@ interface Puff {
 
 /** A short dust puff at the blade. Points only, no texture file. */
 export class Dust {
+  enabled = true;
   private readonly points: Cesium.PointPrimitiveCollection;
   private readonly puffs: Puff[] = [];
   private shown = false;
@@ -70,6 +71,7 @@ export class Dust {
   }
 
   puff(lon: number, lat: number, height: number): void {
+    if (!this.enabled) return;
     for (let i = 0; i < 5; i++) {
       const cart = Cesium.Cartesian3.fromDegrees(lon + (Math.random() - 0.5) * 0.00005, lat + (Math.random() - 0.5) * 0.00004, height + Math.random() * 1.4);
       this.puffs.push({ position: cart, life: 0.8 + Math.random() * 0.5 });

@@ -18,6 +18,8 @@ export class Detail {
   originE = 0;
   originN = 0;
   ready = false;
+  private sweptE = Number.NaN;
+  private sweptN = Number.NaN;
 
   constructor(readonly field: Field) {}
 
@@ -81,6 +83,10 @@ export class Detail {
    */
   cut(east: number, north: number, heading: number, width: number, depth: number): number {
     if (!this.ready || depth <= 0.01) return 0;
+    if (Number.isFinite(this.sweptE)) {
+      const travel = Math.hypot(east - this.sweptE, north - this.sweptN);
+      if (travel < 0.25) return 0;
+    }
     const fx = Math.sin(heading);
     const fn = Math.cos(heading);
     const half = Math.max(width / 2, 0.6);
@@ -107,6 +113,8 @@ export class Detail {
     this.slump(pile);
     this.field.cutM3 += moved;
     this.field.fillM3 += moved;
+    this.sweptE = east;
+    this.sweptN = north;
     return moved;
   }
 

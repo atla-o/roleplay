@@ -1,6 +1,8 @@
 /** Tier 1 cold regions, split into selectable squares. One square holds the measured basin. */
 export const BASIN = { lat: 75.397104, lon: -89.509007 };
 
+export type TileMode = 'abstract' | 'terraform' | 'observe';
+
 export interface WorldTile {
   id: string;
   name: string;
@@ -11,6 +13,7 @@ export interface WorldTile {
   east: number;
   north: number;
   playable: boolean;
+  mode: TileMode;
 }
 
 interface Band {
@@ -34,11 +37,42 @@ const BANDS: Band[] = [
   { regionId: 'antarctica', region: 'Antarctica', west: -180, south: -86, east: 180, north: -70, dLon: 45, dLat: 8 },
 ];
 
-export const REGION_ORDER = ['northern-canada', 'north-dakota', 'alaska', 'northern-europe', 'svalbard', 'russia', 'antarctica'] as const;
+export const REGION_ORDER = [
+  'northern-canada',
+  'cote-nord',
+  'north-dakota',
+  'alaska',
+  'northern-europe',
+  'svalbard',
+  'russia',
+  'antarctica',
+] as const;
 
-export const TILES: WorldTile[] = BANDS.flatMap((band) => tilesIn(band));
+/** Official island centre, Commission de toponymie du Québec. */
+export const RING_CENTER = { lat: 51.43995, lon: -68.73717 };
 
-export const PLAYABLE = TILES.find((tile) => tile.playable)!;
+/**
+ * Geometric centre of the reservoir on the 2020 land-cover grid.
+ * The drawn O uses this so it sits on the water, not on the toponym point.
+ */
+export const RING_MARK = { lat: 51.39, lon: -68.683, radiusM: 29_500 };
+
+export const RING_TILE: WorldTile = {
+  id: 'rene-levasseur',
+  name: 'Île René-Levasseur',
+  region: 'Quebec',
+  regionId: 'cote-nord',
+  west: -69.25,
+  south: 51.0,
+  east: -68.15,
+  north: 51.75,
+  playable: true,
+  mode: 'observe',
+};
+
+export const TILES: WorldTile[] = [...BANDS.flatMap((band) => tilesIn(band)), RING_TILE];
+
+export const PLAYABLE = TILES.find((tile) => tile.id === 'polar-desert-basin')!;
 
 function tilesIn(band: Band): WorldTile[] {
   const tiles: WorldTile[] = [];
@@ -60,6 +94,7 @@ function tilesIn(band: Band): WorldTile[] {
         east,
         north,
         playable,
+        mode: playable ? 'terraform' : 'abstract',
       });
       n += 1;
     }
@@ -73,6 +108,7 @@ export function regionTiles(regionId: string): WorldTile[] {
 
 const REGION_LABELS: Record<string, string> = {
   'northern-canada': 'Northern Canada',
+  'cote-nord': 'Côte-Nord',
   'north-dakota': 'North Dakota',
   alaska: 'Alaska',
   'northern-europe': 'Northern Europe',

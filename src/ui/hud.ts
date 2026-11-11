@@ -43,6 +43,7 @@ export class Hud {
   onDay: (day: number) => void = () => {};
   onOverlay: () => void = () => {};
   onRestore: () => void = () => {};
+  onUndo: () => void = () => {};
   onCommit: () => void = () => {};
   onWorld: () => void = () => {};
   readonly slopeBox: HTMLInputElement;
@@ -93,6 +94,8 @@ export class Hud {
     root.querySelector('#open-vision')!.addEventListener('click', () => this.vision.showModal());
     root.querySelector('#open-about')!.addEventListener('click', () => this.about.showModal());
     root.querySelector('#restore')!.addEventListener('click', () => this.onRestore());
+    root.querySelector('#undo')!.addEventListener('click', () => this.onUndo());
+    root.querySelector('#commit')!.addEventListener('click', () => this.onCommit());
     root.querySelector('#open-world')!.addEventListener('click', () => this.onWorld());
     root.querySelectorAll('[data-close]').forEach((btn) => btn.addEventListener('click', () => (btn.closest('dialog') as HTMLDialogElement).close()));
     root.querySelectorAll<HTMLButtonElement>('[data-species]').forEach((btn) => {
@@ -115,11 +118,34 @@ export class Hud {
       btn.classList.toggle('active', btn.dataset.tool === this.tool);
     });
     this.crosshair.classList.toggle('on', this.tool === 'walk');
+    document.querySelector<HTMLElement>('#walk-pad')?.toggleAttribute('hidden', this.tool !== 'walk');
+  }
+
+  setCoach(next: string, how: string): void {
+    const nextEl = document.querySelector('#coach-next');
+    const howEl = document.querySelector('#coach-how');
+    if (nextEl) nextEl.textContent = next;
+    if (howEl) howEl.textContent = how;
+  }
+
+  setCommitEnabled(on: boolean): void {
+    const button = document.querySelector<HTMLButtonElement>('#commit');
+    if (!button) return;
+    button.hidden = !on;
+  }
+
+  setUndoEnabled(on: boolean): void {
+    const button = document.querySelector<HTMLButtonElement>('#undo');
+    if (button) button.disabled = !on;
   }
 
   private paintSpecies(): void {
     document.querySelectorAll<HTMLElement>('[data-card]').forEach((card) => {
       card.classList.toggle('active', card.dataset.card === this.speciesId);
+    });
+    document.querySelectorAll<HTMLButtonElement>('[data-species]').forEach((button) => {
+      const on = button.dataset.species === this.speciesId && button.dataset.action === this.action;
+      button.classList.toggle('on', on && button.parentElement?.classList.contains('actions') === true);
     });
   }
 
@@ -212,7 +238,18 @@ function markup(species: Species[]): string {
       <button id="open-vision" class="text-btn" type="button" style="width:auto">Vision</button>
       <div class="phase" id="phase-label">Phase 1</div>
     </header>
-    <aside class="rail">${tools}<div class="group">Surface</div><button id="restore" class="text-btn" type="button">Restore measured</button></aside>
+    <aside class="rail">${tools}<div class="group">Surface</div><button id="undo" class="text-btn" type="button">Undo</button><button id="restore" class="text-btn" type="button">Reset to measured</button></aside>
+    <div class="coach" id="coach">
+      <p id="coach-next"></p>
+      <p id="coach-how"></p>
+      <button id="commit" class="tool" type="button" hidden>Commit line</button>
+    </div>
+    <div id="walk-pad" class="walk-pad" hidden>
+      <button type="button" data-move="w" aria-label="Walk forward">▲</button>
+      <button type="button" data-move="a" aria-label="Walk left">◀</button>
+      <button type="button" data-move="s" aria-label="Walk back">▼</button>
+      <button type="button" data-move="d" aria-label="Walk right">▶</button>
+    </div>
     <aside class="inspector">
       <div class="kicker">Under the cursor</div>
       <div id="reading"></div>

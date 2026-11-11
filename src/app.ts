@@ -15,7 +15,10 @@ interface TerrainMeta {
   georef: { cols: number; rows: number; lat: number[]; lon: number[] };
 }
 
-export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }): Promise<Record<string, unknown>> {
+export async function boot(
+  root: HTMLElement,
+  hooks?: { onWorld?: () => void; intent?: 'mass' | 'bio' | 'structure' | null },
+): Promise<Record<string, unknown>> {
   const bootEl = document.createElement('div');
   bootEl.className = 'boot';
   bootEl.textContent = 'Reading the measured surface';
@@ -74,6 +77,10 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
         : `Day ${sim.day} · frozen ground`;
     hud.setSeason(sim.day, season);
     hud.renderMilestones(sim.milestones);
+    const coach = coachCopy(hud.tool, sim, drawing.length);
+    hud.setCoach(coach.next, coach.how);
+    hud.setCommitEnabled((hud.tool === 'channel' || hud.tool === 'street') && drawing.length >= 2);
+    hud.setUndoEnabled(sim.canUndo());
     if (sim.reading) {
       const r = sim.reading;
       hud.setReading(`
@@ -102,7 +109,7 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
 
   hud.onTool = (id: ToolId) => {
     drawing = [];
-    view.setDrawMode(id === 'channel' || id === 'street');
+    view.setGroundTool(id !== 'orbit' && id !== 'walk');
     if (id === 'walk') stand(wx, wz, yaw);
     else {
       walking = false;
@@ -112,7 +119,8 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
   };
   hud.onDay = (day) => {
     sim.setDay(day);
-    refresh();
+    view.sync(sim, meta, overlay(), { terrain: false });
+    paintHud();
   };
   hud.onOverlay = () => refresh();
   hud.onRestore = () => {
@@ -120,12 +128,18 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
     drawing = [];
     refresh();
   };
-  hud.onCommit = () => {
-    if (drawing.length < 2) return;
-    if (hud.tool === 'channel') sim.cutPolyline(drawing);
-    if (hud.tool === 'street') sim.buildStreet(drawing);
+  hud.onUndo = () => {
+    sim.undo();
     drawing = [];
     refresh();
+  };
+  hud.onCommit = () => {
+    if (drawing.length < 2) return;
+    const mid = drawing[Math.floor(drawing.length / 2)];
+    const result = hud.tool === 'channel' ? sim.cutPolyline(drawing) : hud.tool === 'street' ? sim.buildStreet(drawing) : null;
+    drawing = [];
+    refresh();
+    if (result?.ok && mid) lookAt(mid.x, mid.z, 1100);
   };
 
   const canvas = view.renderer.domElement;
@@ -133,7 +147,7 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
   canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
   canvas.addEventListener('pointerdown', (ev) => {
     pointer = { x: ev.clientX, y: ev.clientY };
-    if (walking) canvas.requestPointerLock?.();
+    if (walking && ev.pointerType !== 'touch') canvas.requestPointerLock?.();
   });
   canvas.addEventListener('pointermove', (ev) => {
     const hit = view.hit(ev.clientX, ev.clientY);
@@ -166,6 +180,18 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
   });
   canvas.addEventListener('dblclick', () => hud.requestCommit());
 
+  root.querySelectorAll<HTMLButtonElement>('[data-move]').forEach((button) => {
+    const key = button.dataset.move || '';
+    const down = (ev: Event) => {
+      ev.preventDefault();
+      keys.add(key);
+    };
+    const up = () => keys.delete(key);
+    button.addEventListener('pointerdown', down);
+    button.addEventListener('pointerup', up);
+    button.addEventListener('pointerleave', up);
+    button.addEventListener('pointercancel', up);
+  });
   window.addEventListener('keydown', (ev) => {
     keys.add(ev.key);
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(ev.key)) ev.preventDefault();
@@ -192,9 +218,24 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
   };
   home();
   refresh();
+  if (hooks?.intent === 'mass') {
+    hud.tool = 'drain';
+    sim.status = 'Mass movers are on the measured ground. Click blue water to drain it, or cut a channel and commit the line.';
+    hud.onTool('drain');
+  } else if (hooks?.intent === 'bio') {
+    hud.tool = 'survey';
+    sim.status = 'Bio crew is on the ground. Survey reads moisture and slope. A shelter needs drained, gentle ground and stone.';
+    hud.onTool('survey');
+  } else if (hooks?.intent === 'structure') {
+    hud.tool = 'street';
+    sim.status = 'Structure builders lay a street on dry graded ground. They spend stone from the bank. Cut or mine first if the bank is empty.';
+    hud.onTool('street');
+  }
 
   let last = performance.now();
+  let alive = true;
   const loop = (now: number) => {
+    if (!alive) return;
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (walking) step(dt);
@@ -254,26 +295,35 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
     if (hud.tool === 'channel' || hud.tool === 'street') {
       drawing.push({ x, z });
       view.setPreview(drawing, field);
-      sim.status = `${drawing.length} points. Enter commits the ${hud.tool === 'channel' ? 'channel' : 'street'}.`;
+      sim.status = `${drawing.length} point${drawing.length === 1 ? '' : 's'}. Commit the ${hud.tool === 'channel' ? 'channel' : 'street'} when the line has two ends.`;
       paintHud();
       return;
     }
+    let result: { ok: boolean } | null = null;
     if (hud.tool === 'drain') {
       const { c, r } = field.rcOf(x, z);
       const i = field.idx(clamp(Math.round(c), 0, field.cols - 1), clamp(Math.round(r), 0, field.rows - 1));
       const plan = sim.planDiversion(sim.water.pondId[i] >= 0 ? sim.water.pondId[i] : undefined);
-      if (!plan) sim.status = 'No pond under the cursor.';
-      else sim.cutPolyline(plan.points, plan.invertStart);
-    } else if (hud.tool === 'grade') sim.grade(x, z);
-    else if (hud.tool === 'mine') sim.mine(x, z);
-    else if (hud.tool === 'survey') sim.survey(x, z);
-    else if (hud.tool === 'dome') sim.placeDome(x, z);
-    else if (hud.tool === 'bed') sim.placeBed(x, z);
-    else if (hud.tool === 'ark') sim.deploy(hud.speciesId, x, z, hud.action);
-    else if (hud.tool === 'greenhouse' || hud.tool === 'waterworks' || hud.tool === 'township') sim.buildStructure(hud.tool, x, z, yaw);
+      if (!plan) sim.status = 'No pond under the cursor. Blue water is standing melt. Click that.';
+      else result = sim.cutPolyline(plan.points, plan.invertStart);
+    } else if (hud.tool === 'grade') result = sim.grade(x, z);
+    else if (hud.tool === 'mine') result = sim.mine(x, z);
+    else if (hud.tool === 'survey') result = sim.survey(x, z);
+    else if (hud.tool === 'dome') result = sim.placeDome(x, z);
+    else if (hud.tool === 'bed') result = sim.placeBed(x, z);
+    else if (hud.tool === 'ark') result = sim.deploy(hud.speciesId, x, z, hud.action);
+    else if (hud.tool === 'greenhouse' || hud.tool === 'waterworks' || hud.tool === 'township') result = sim.buildStructure(hud.tool, x, z, yaw);
     wx = x;
     wz = z;
     refresh();
+    if (result?.ok && (hud.tool === 'drain' || hud.tool === 'grade' || hud.tool === 'mine' || hud.tool === 'dome')) {
+      lookAt(x, z, hud.tool === 'drain' ? 1400 : 820);
+    }
+  }
+
+  function lookAt(x: number, z: number, distance: number) {
+    if (walking) return;
+    view.frame({ x, y: sim.surfaceAt(x, z).y, z }, distance, 22, 46);
   }
 
   const api = {
@@ -331,6 +381,12 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
       return result;
     },
     planDiversion: () => sim.planDiversion(),
+    undo: () => {
+      const ok = sim.undo();
+      drawing = [];
+      refresh();
+      return ok;
+    },
     performSuccession: () => {
       const report = performSuccession(sim);
       view.frame(report.look, report.look.distance, report.look.azimuth, report.look.altitude);
@@ -361,9 +417,42 @@ export async function boot(root: HTMLElement, hooks?: { onWorld?: () => void }):
     },
     pose: () => ({ x: wx, z: wz, yaw, pitch, eye: sim.surfaceAt(wx, wz).y + sim.physics.walk_eye_m }),
     settle: () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))),
+    stop: () => {
+      alive = false;
+    },
   };
   window.__roleplay = api;
   return api;
+}
+
+function coachCopy(tool: ToolId, sim: Sim, points: number): { next: string; how: string } {
+  const touch = window.matchMedia('(pointer: coarse)').matches;
+  const look = touch ? 'Two fingers look around. Tap the ground.' : 'Right-drag looks around. Click the ground.';
+  const how: Record<ToolId, string> = {
+    orbit: 'Drag to look. Scroll or pinch to zoom. Then pick Drain pond or Cut channel.',
+    walk: 'WASD or the arrows walk. Shift runs. Esc releases the pointer.',
+    channel: points < 2 ? `Click to drop points. ${look}` : 'The line is ready. Commit it. Backspace removes the last point.',
+    drain: `Click blue standing water. The mover cuts a way out. ${look}`,
+    grade: `Click to level a pad that sheds water. Cut and fill stay in the basin. ${look}`,
+    mine: `Click to bank stone. The pit can hold meltwater. ${look}`,
+    survey: 'Click to read moisture, slope, and thaw. Nothing is cut.',
+    dome: 'Click drained, gentle ground. A shelter spends stone from the bank.',
+    bed: 'Click a dry, gentle spot for a living soil bed.',
+    ark: 'Click prepared ground while the growing window is open. Pick the line in the panel.',
+    street: points < 2 ? 'Click dry graded ground for the two ends of a street.' : 'Commit the street. It spends stone and stays off standing water.',
+    greenhouse: 'Click a dry pad. The greenhouse spends stone.',
+    waterworks: 'Click a dry pad. The water works spend stone.',
+    township: 'Click a dry pad. The township module spends stone.',
+  };
+  let next = 'Start here: drain a pond or cut a channel, then grade a pad.';
+  if (sim.cutVolume < 80) next = 'Mass movers first. Drain standing water or cut a channel.';
+  else if (!sim.field.graded.some((v) => v === 1)) next = 'Water has a way out. Grade a pad on the ground you want to use.';
+  else if (sim.stone < 40) next = 'The pad is graded. Mine or cut if the stone bank is still short.';
+  else if (sim.surveys === 0) next = 'Survey the graded ground, then set a shelter.';
+  else if (sim.domes.length === 0) next = 'Set a shelter on the drained pad. It spends stone.';
+  else if (sim.streets.length === 0) next = 'Lay a street on the dry pad, then walk it.';
+  else next = 'The street is down. Walk it, and add a greenhouse, water works, or a township module.';
+  return { next, how: how[tool] };
 }
 
 function locate(meta: TerrainMeta, x: number, z: number): string {

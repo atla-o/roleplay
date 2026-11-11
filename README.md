@@ -1,10 +1,8 @@
 # Roleplay
 
-Roleplay is the Creation division's world map and measured basin. The map is a CesiumJS globe (Apache-2.0) split into Tier 1 cold squares, north first: Northern Canada, the United States including North Dakota, Northern Europe, Russia, and Antarctica. One square, the Polar Desert Basin, opens the measured 4 × 4 km surface. There the existing Three.js basin keeps real ArcticDEM and NHN ground, cold-method drainage, the ninety-day window, and a 1.7 m walk.
+Roleplay is a 1:1 ground you can walk and drive. Polar Desert Basin is a 4 km square of ArcticDEM at 2 m. Île René-Levasseur is a 4 km square of Canada's 1 m HRDEM on the western shore, stored as the 2 m mean of those posts, with the reservoir drawn as water at the measured surface. Sentinel-2 colors the ground. A robot on that ground cuts and pushes soil. Cut and fill stay equal.
 
-At globe scale the player is a giant. Swarm orders move mass movers, then the bio builder and weather manipulator, then structure builders, across a selected square. Cut and fill on that view are conserved sim parameters. They do not rewrite the measured basin.
-
-The globe does not use Cesium ion. Imagery is Sentinel-2 cloudless from EOX over the Natural Earth II mosaic shipped with CesiumJS. Species dots are a thin GBIF occurrence layer. The Gene Ark catalog is still what gets deployed inside the basin.
+There is no HUD. One button in the corner opens two choices: viewpoint (Titan, Robot, Human) and place (the two sites). Esc closes it. `?capture=1` hides the button. Controls are listed below, not drawn on the screen.
 
 It is a static site. `base` is `./`, so `dist/` can sit at the root of a host, on a subpath such as `https://atlas.rehab/creation/roleplay/`, or on a subdomain such as `https://roleplay.atlas.rehab/`.
 
@@ -20,9 +18,23 @@ npm run preview
 
 `npm run typecheck` is included in the build. The baked rasters in `public/data/` are already committed, so the site does not need Python or GDAL at build time.
 
+`?capture=1` hides the corner button. Nothing else is drawn on the picture.
+
+## Controls
+
+The corner button switches body and place. Esc closes that panel. Changing place keeps the edits and moves you to the middle of the other ground. A short camera move, under two seconds on a machine that holds 60 fps, carries you there.
+
+**Robot.** You start in the machine. W is throttle, S brakes into reverse. A and D steer. The mouse, or the right stick, orbits the chase camera and it recenters behind the machine after about 1.5 seconds. Q raises the blade, E lowers it; hold either one. On a gamepad the right trigger is throttle, the left trigger is reverse, the left stick steers, and the bumpers raise and lower the blade. The blade is a height relative to the tracks. Lowered, it planes the posts in front of it and piles that soil ahead. The pile slumps to the angle of repose. Freshly cut ground is darker than the satellite picture. The machine slows as the cut gets heavier.
+
+**Human.** Eye height is 1.8 m. WASD walks, the mouse looks (click the picture to capture the pointer), Shift runs, Space jumps. On a gamepad the left stick walks, the right stick looks, the right trigger runs, and the bottom face button jumps.
+
+**Titan.** The same walk as a human, at 48 times the size, so a 4 km ground is a few minutes on foot. The stride is heavy and slow. Relief is not exaggerated.
+
+Terrain edits are remembered in the browser. There is no menu that edits the ground.
+
 ## Bake
 
-`tools/bake/bake.py` rebuilds `public/data/` from ArcticDEM v4.1 and the NRCan National Hydro Network. See `tools/bake/README.md` and `ATTRIBUTION.md`.
+`tools/bake/bake.py` rebuilds the Polar Desert Basin rasters from ArcticDEM v4.1 and the NRCan National Hydro Network. The island square committed under `public/data/ile` is the shore window described in `ATTRIBUTION.md`. `tools/bake/ile.py` still builds the older wide mosaic. See `tools/bake/README.md` and `ATTRIBUTION.md`.
 
 ## Parameters
 

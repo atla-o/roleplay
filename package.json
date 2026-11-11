@@ -8,13 +8,15 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "check": "tsx scripts/sim-check.ts",
+    "check": "tsx scripts/sim-check.ts && tsx scripts/detail-check.ts",
     "verify": "node scripts/verify.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@fontsource/instrument-sans": "^5.3.0",
+    "cannon-es": "^0.20.0",
     "cesium": "^1.147.0",
+    "proj4": "^2.22.0",
     "three": "^0.187.0",
     "vite-plugin-cesium": "^1.2.23"
   },

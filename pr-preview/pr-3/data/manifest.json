@@ -1,0 +1,82 @@
+{
+  "product": "roleplay-terrain",
+  "frame": "Northern Canada (Polar Desert Basin, 4 \u00d7 4 km)",
+  "baked_at": "2026-11-06T01:15:58.438308+00:00",
+  "statement": "Roleplay is a pure digital simulation built from open elevation data with no land claim or ground impact.",
+  "elevation": {
+    "title": "ArcticDEM v4.1",
+    "collection": "arcticdem-mosaics-v4.1-2m",
+    "stac": "https://stac.pgc.umn.edu/api/v1",
+    "mosaic": "2 m",
+    "resampling": "bilinear to 500\u00d7500 posts, spacing 8.016032 m",
+    "items": [
+      {
+        "id": "29_29_2_2_2m_v4.1",
+        "href": "https://pgc-opendata-dems.s3.us-west-2.amazonaws.com/arcticdem/mosaics/v4.1/2m/29_29/29_29_2_2_2m_v4.1_dem.tif",
+        "crs": "EPSG:3413",
+        "nodata": -9999.0,
+        "native_res_m": 2.0
+      }
+    ],
+    "license": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "credit": "Polar Geospatial Center, University of Minnesota",
+    "citation": "Porter et al. 2023. ArcticDEM, Version 4.1.",
+    "doi": "https://doi.org/10.7910/DVN/3VDC4W",
+    "retrieved_elevation_m": {
+      "min": 66.68,
+      "max": 279.722
+    },
+    "nodata_posts_filled": 0
+  },
+  "hydrography": {
+    "work_unit": "10VE001",
+    "url": "https://ftp.maps.canada.ca/pub/nrcan_rncan/vector/geobase_nhn_rhn/shp_en/10/nhn_rhn_10ve001_shp_en.zip",
+    "crs_wkt_prefix": "GEOGCS[\"GCS_North_American_1983_CSRS\"",
+    "clipped_counts": {
+      "HN_NLFLOW_1": 52,
+      "HD_SLWATER_1": 30,
+      "HD_WATERBODY_2": 15
+    },
+    "licence": "Open Government Licence \u2013 Canada",
+    "licence_url": "https://open.canada.ca/en/open-government-licence-canada"
+  },
+  "derived": {
+    "slope": "Finite difference on the baked posts, degrees.",
+    "depression": "Priority-flood depth to the border outlet, millimetres.",
+    "flow": "D8 accumulation, stored as log2(cells + 1).",
+    "derived_flow_lines": 57
+  },
+  "software": {
+    "python": "3.12.3",
+    "rasterio": "1.5.2",
+    "numpy": "2.5.4"
+  },
+  "files": {
+    "depression.png": {
+      "bytes": 6336,
+      "sha256": "e03d2b335185a2f8d4db5edfa807122a7cc4f404214f79a3d6948a5c8408926f"
+    },
+    "flow.png": {
+      "bytes": 186219,
+      "sha256": "c3b2c8365f0269f396919aed85613a74a5d91dce2c625797c6471978641f1d83"
+    },
+    "height.png": {
+      "bytes": 479142,
+      "sha256": "03f6770e1b3e5d136a89b25973fdcc58f81d8fcf22b717900e1de3266569c690"
+    },
+    "hydro.geojson": {
+      "bytes": 79825,
+      "sha256": "86e0bfa5e4938a3f828b172670e349ff063910137f0633af48cc2af590df6d27"
+    },
+    "slope.png": {
+      "bytes": 470240,
+      "sha256": "0d9246af634d9de799c214cb516cfee06e2003771ba7481c427433959f187ca9"
+    },
+    "terrain.json": {
+      "bytes": 2289,
+      "sha256": "9b0b0fb814713f5b40570377a4a3b7d8f23375aa631ea1d7f6615ab9f526e9a4"
+    }
+  },
+  "total_bytes": 1224051
+}

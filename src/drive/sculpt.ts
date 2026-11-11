@@ -1,9 +1,17 @@
 import type { Field } from './field';
 
 /**
- * Soil stays in the field or in a machine.
- * A push raises the ground ahead by the same volume it cuts.
- * A dig holds the volume in the bucket. A dump puts that volume back on the ground.
+ * Soil stays in the field. A push raises the ground ahead by the same volume it cuts.
+ *
+ * Polar desert pavement (basin) is treated as loose sandy gravel: friction angle 35°,
+ * bulk density 1.8 t/m³, cohesion taken as 0 for a dry scrape.
+ * French, H. M. 2007. The Periglacial Environment. Wiley. Gravelly polar-desert
+ * surfaces sit in the sandy-gravel range; Das, Principles of Geotechnical
+ * Engineering, gives loose gravel a friction angle of about 34–40°.
+ *
+ * The island surface is glacial till under boreal cover: friction angle 32°,
+ * bulk density 1.7 t/m³. Same textbook range for loose sandy till.
+ * The pile may not stand steeper than tan(phi). That is the angle of repose used below.
  */
 
 function cellsIn(field: Field, east: number, north: number, along: number, side: number, fx: number, fn: number): number[] {
@@ -174,9 +182,9 @@ export function raindrops(field: Field, count: number): void {
   field.dirty = true;
 }
 
-/** Move soil from too-steep neighbours until the face is near 34°, keeping the volume. */
-function slump(field: Field, seeds: number[]): void {
-  const slope = Math.tan((34 * Math.PI) / 180);
+/** Move soil from too-steep neighbours until the face is near the angle of repose, keeping the volume. */
+function slump(field: Field, seeds: number[], reposeDeg = 35): void {
+  const slope = Math.tan((reposeDeg * Math.PI) / 180);
   const area = field.spacing * field.spacing;
   let open = seeds.slice(0, 48);
   for (let pass = 0; pass < 3; pass++) {
@@ -205,8 +213,8 @@ function slump(field: Field, seeds: number[]): void {
   }
 }
 
-/** Plane every cell under the blade down to an absolute elevation and push that soil ahead. */
-export function planeBlade(field: Field, east: number, north: number, heading: number, width: number, edgeY: number): number {
+/** Plane every cell under the blade down toward an absolute elevation and push that soil ahead. */
+export function planeBlade(field: Field, east: number, north: number, heading: number, width: number, edgeY: number, reposeDeg = 35): number {
   const fx = Math.sin(heading);
   const fn = Math.cos(heading);
   const area = field.spacing * field.spacing;
@@ -227,9 +235,10 @@ export function planeBlade(field: Field, east: number, north: number, heading: n
   const lift = moved / (pile.length * area);
   for (const i of pile) {
     field.heights[i] = (field.heights[i] ?? 0) + lift;
+    field.channel[i] = 1;
     field.mark(i);
   }
-  slump(field, pile);
+  slump(field, pile, reposeDeg);
   field.cutM3 += moved;
   field.fillM3 += moved;
   field.dirty = true;

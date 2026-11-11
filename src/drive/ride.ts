@@ -1,6 +1,6 @@
 import * as CANNON from 'cannon-es';
 import type { Field } from './field';
-import { digBucket, dumpLoad, planeBlade } from './sculpt';
+import { planeBlade } from './sculpt';
 
 export type RigKind = 'dozer' | 'excavator' | 'hauler';
 
@@ -47,33 +47,69 @@ export class Yard {
   sculpt: ((east: number, north: number, heading: number, width: number, edge: number) => number) | null = null;
   /** Soil the blade is holding, in m³. Used to drag the machine when the blade is full. */
   bladeLoad: (() => number) | null = null;
-  /** Called when the blade is up so a pushed load can be left as a pile. */
-  unload: ((east: number, north: number) => void) | null = null;
+  /** Friction angle of the surface, degrees. The spoil pile cannot stand steeper than this. */
+  repose = 35;
+  /** Bulk density, kg/m³. Used for the force that slows the blade. */
+  density = 1800;
+  private readonly win = 96;
+  private originC = 0;
+  private originR = 0;
+  private readonly groundBody: CANNON.Body;
+  private sweptE = Number.NaN;
+  private sweptN = Number.NaN;
 
   constructor(readonly field: Field) {
     this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
     this.world.allowSleep = false;
     this.data = [];
-    for (let c = 0; c < field.cols; c++) {
-      const column: number[] = [];
-      // Cannon's local Y becomes world −Z after the ground rotation, then we shift it.
-      // Store rows so world Z increases north, matching the mesh.
-      for (let y = 0; y < field.rows; y++) column.push(field.heights[field.index(c, field.rows - 1 - y)] ?? 0);
-      this.data.push(column);
-    }
+    for (let c = 0; c < this.win; c++) this.data.push(new Array<number>(this.win).fill(0));
     this.shape = new CANNON.Heightfield(this.data, { elementSize: field.spacing });
-    const ground = new CANNON.Body({ mass: 0 });
-    ground.addShape(this.shape);
+    this.groundBody = new CANNON.Body({ mass: 0 });
+    this.groundBody.addShape(this.shape);
     const rotation = new CANNON.Quaternion();
     rotation.setFromEuler(-Math.PI / 2, 0, 0);
-    ground.quaternion.copy(rotation);
-    // The rotated field covers z from -(rows-1)*spacing to 0. Shift it so z is north.
-    ground.position.set(0, 0, (field.rows - 1) * field.spacing);
-    this.world.addBody(ground);
+    this.groundBody.quaternion.copy(rotation);
+    this.world.addBody(this.groundBody);
+    this.placeWindow(0, 0);
+  }
+
+  /** Keep a small collision patch under the machine. The posts are copied from the real grid, not resampled. */
+  private placeWindow(originC: number, originR: number): void {
+    const maxC = this.field.cols - this.win;
+    const maxR = this.field.rows - this.win;
+    this.originC = Math.max(0, Math.min(maxC, originC));
+    this.originR = Math.max(0, Math.min(maxR, originR));
+    for (let c = 0; c < this.win; c++) {
+      const column = this.data[c];
+      if (!column) continue;
+      for (let y = 0; y < this.win; y++) {
+        const row = this.originR + this.win - 1 - y;
+        column[y] = this.field.heights[this.field.index(this.originC + c, row)] ?? 0;
+      }
+    }
+    // Same flip as a full field: local y 0 is the north edge, and world Z increases north.
+    this.groundBody.position.set(this.originC * this.field.spacing, 0, (this.originR + this.win - 1) * this.field.spacing);
+    this.shape.update();
+  }
+
+  private ensureWindow(east: number, north: number): void {
+    const spacing = this.field.spacing;
+    const c = Math.floor(east / spacing);
+    const r = Math.floor(north / spacing);
+    const margin = 18;
+    if (
+      c < this.originC + margin ||
+      r < this.originR + margin ||
+      c > this.originC + this.win - margin ||
+      r > this.originR + this.win - margin
+    ) {
+      this.placeWindow(c - (this.win / 2 | 0), r - (this.win / 2 | 0));
+    }
   }
 
   spawn(kind: RigKind, east: number, north: number): Rig {
+    this.ensureWindow(east, north);
     const spec = SPECS[kind];
     const chassis = new CANNON.Body({ mass: spec.mass });
     chassis.addShape(new CANNON.Box(new CANNON.Vec3(spec.width / 2, 0.7, spec.length / 2)), new CANNON.Vec3(0, 0.55, 0));
@@ -150,6 +186,10 @@ export class Yard {
   }
 
   step(dt: number, active: Rig | null, input: DriveInput): void {
+    if (active) {
+      const pose = this.pose(active);
+      this.ensureWindow(pose.east, pose.north);
+    }
     this.accumulator += Math.min(dt, 0.05);
     const h = 1 / 60;
     while (this.accumulator >= h) {
@@ -240,44 +280,24 @@ export class Yard {
   }
 
   private work(rig: Rig, input: DriveInput, dt: number, pose: ReturnType<Yard['pose']>, spec: (typeof SPECS)[RigKind]): void {
-    if (input.raise) rig.bladeAngle = Math.min(0.6, rig.bladeAngle + dt * 1.4);
-    if (input.lower) rig.bladeAngle = Math.max(-0.75, rig.bladeAngle - dt * 1.4);
-    const edge = this.datum + Math.sin(rig.bladeAngle) * 2.4;
+    if (input.raise) rig.bladeAngle = Math.min(0.55, rig.bladeAngle + dt * 1.5);
+    if (input.lower) rig.bladeAngle = Math.max(-0.7, rig.bladeAngle - dt * 1.5);
+    const reach = spec.length / 2 + 1.4;
+    const bx = pose.east + Math.sin(pose.heading) * reach;
+    const bz = pose.north + Math.cos(pose.heading) * reach;
+    const under = this.surface(pose.east, pose.north);
+    const edge = under + Math.sin(rig.bladeAngle) * 1.35;
     let moved = 0;
-    if (rig.kind === 'dozer' && rig.bladeAngle < 0.05 && Math.abs(pose.speed) > 1) {
-      const depth = Math.max(0, -Math.sin(rig.bladeAngle) * 1.15);
-      if (this.sculpt) {
-        moved = this.sculpt(pose.east + Math.sin(pose.heading) * (spec.length / 2 + 1.2), pose.north + Math.cos(pose.heading) * (spec.length / 2 + 1.2), pose.heading, spec.width, edge);
-      } else {
-        const reach = spec.length / 2 + this.field.spacing * 0.55;
-        const ground = this.field.sample(pose.east + Math.sin(pose.heading) * reach, pose.north + Math.cos(pose.heading) * reach);
-        const edge = ground - depth;
-        if (ground > edge + 0.03) {
-          planeBlade(this.field, pose.east + Math.sin(pose.heading) * reach, pose.north + Math.cos(pose.heading) * reach, pose.heading, Math.max(spec.width, this.field.spacing), edge);
-        }
-      }
+    const travelled = Number.isFinite(this.sweptE) ? Math.hypot(bx - this.sweptE, bz - this.sweptN) : 1;
+    if (rig.kind === 'dozer' && rig.bladeAngle < 0.02 && Math.abs(pose.speed) > 1.2 && travelled > 0.35) {
+      moved = planeBlade(this.field, bx, bz, pose.heading, spec.width, edge, this.repose);
+      this.sweptE = bx;
+      this.sweptN = bz;
     }
-    if (rig.kind === 'dozer' && rig.bladeAngle > 0.2 && this.unload) {
-      const reach = spec.length / 2 + 1.2;
-      this.unload(pose.east + Math.sin(pose.heading) * reach, pose.north + Math.cos(pose.heading) * reach);
-    }
-    rig.loadDrag = 1;
-    if (rig.bladeAngle < -0.05) rig.loadDrag *= 0.68;
-    if (moved > 0.02 || (this.bladeLoad?.() ?? 0) > 6) rig.loadDrag *= 0.5;
-    if (rig.kind === 'excavator' && input.dig && rig.loadM3 < 24) {
-      const dug = digBucket(
-        this.field,
-        pose.east + Math.sin(pose.heading) * this.field.spacing,
-        pose.north + Math.cos(pose.heading) * this.field.spacing,
-        Math.max(6, this.field.spacing * 0.9),
-        0.16 * dt,
-      );
-      rig.loadM3 += dug;
-    }
-    if (input.dump && rig.loadM3 > 0.05 && (rig.kind === 'hauler' || rig.kind === 'excavator')) {
-      const placed = dumpLoad(this.field, pose.east - Math.sin(pose.heading) * 4, pose.north - Math.cos(pose.heading) * 4, rig.loadM3);
-      rig.loadM3 = Math.max(0, rig.loadM3 - placed);
-    }
+    const rate = moved / Math.max(dt, 1 / 120);
+    const resistance = rate * this.density * 9.81 * Math.tan((this.repose * Math.PI) / 180);
+    rig.loadDrag = Math.max(0.22, 1 - resistance / spec.force);
+    if (rig.bladeAngle < -0.2) rig.loadDrag *= 0.8;
   }
 
   held(): number {
@@ -285,13 +305,7 @@ export class Yard {
   }
 
   private syncHeights(): void {
-    const { cols, rows } = this.field;
-    for (let c = 0; c < cols; c++) {
-      const column = this.data[c];
-      if (!column) continue;
-      for (let y = 0; y < rows; y++) column[y] = this.field.heights[this.field.index(c, rows - 1 - y)] ?? 0;
-    }
-    this.shape.update();
+    this.placeWindow(this.originC, this.originR);
   }
 
   /** Copy the field into the collision heightfield after a saved edit is restored. */
@@ -300,6 +314,7 @@ export class Yard {
   }
 
   recover(rig: Rig, east: number, north: number): void {
+    this.ensureWindow(east, north);
     const body = rig.vehicle.chassisBody;
     const ground = this.surface(east, north);
     body.position.set(east, ground + 1.6, north);

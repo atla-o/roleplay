@@ -71,7 +71,7 @@ const ilePng = readFileSync(new URL('../public/data/ile/height.png', import.meta
 const ileMeta = JSON.parse(readFileSync(new URL('../public/data/ile/terrain.json', import.meta.url), 'utf8'));
 const ileDecoded = await decodeGrayPng(ilePng.buffer.slice(ilePng.byteOffset, ilePng.byteOffset + ilePng.byteLength));
 assert(ileDecoded.width === ileMeta.cols && ileDecoded.height === ileMeta.rows, 'ring raster does not match its grid');
-assert(ileMeta.elevation_m.min > 300 && ileMeta.elevation_m.max > 900 && ileMeta.elevation_m.max < 1200, 'ring elevation is outside the measured window');
+assert(ileMeta.elevation_m.min > 300 && ileMeta.elevation_m.max > 500 && ileMeta.elevation_m.max < 700, 'ring elevation is outside the measured window');
 assert(commandSwarm(emptyBook(), 'survey').ok, 'a monitoring crew does not need a cut');
 const slopeZ = new Float32Array(30 * 30);
 for (let r = 0; r < 30; r++) for (let c = 0; c < 30; c++) slopeZ[r * 30 + c] = 80 + c * 0.35;
@@ -96,13 +96,20 @@ assert(book.stone_m3 < book.cut_m3 * 0.38, 'structure swarm should draw the ston
 const png = readFileSync(new URL('../public/data/height.png', import.meta.url));
 const meta = JSON.parse(readFileSync(new URL('../public/data/terrain.json', import.meta.url), 'utf8'));
 const decoded = await decodeGrayPng(png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength));
-assert(decoded.width === 500 && decoded.height === 500, 'height raster is not 500×500');
-const z = new Float32Array(decoded.samples.length);
+assert(decoded.width === meta.cols && decoded.height === meta.rows, `height raster is not ${meta.cols}×${meta.rows}`);
 const span = meta.elevation_m.max - meta.elevation_m.min;
-for (let i = 0; i < z.length; i++) z[i] = meta.elevation_m.min + (decoded.samples[i] / 65535) * span;
+const step = 4;
+const z = new Float32Array((decoded.width / step) * (decoded.height / step));
+const side = decoded.width / step;
+for (let r = 0; r < side; r++) {
+  for (let c = 0; c < side; c++) {
+    const sample = decoded.samples[(r * step) * decoded.width + c * step] ?? 0;
+    z[r * side + c] = meta.elevation_m.min + (sample / 65535) * span;
+  }
+}
 assert(z[0] > 60 && z[0] < 290, 'decoded elevation is outside the measured range');
 const t0 = performance.now();
-const real = solveWater(z, 500, 500, meta.spacing_m, { ...cfg, flow_draw_min_cells: 260, capture_m: 100 }, new Uint8Array(z.length), new Uint8Array(z.length));
+const real = solveWater(z, side, side, meta.spacing_m * step, { ...cfg, flow_draw_min_cells: 260, capture_m: 100 }, new Uint8Array(z.length), new Uint8Array(z.length));
 const ms = performance.now() - t0;
 assert(real.ponded_m3 > 1000, `measured basin should hold meltwater, got ${real.ponded_m3}`);
 assert(real.ponded_m3 <= real.input_m3 * 1.02, 'measured ponding exceeds the melt budget');

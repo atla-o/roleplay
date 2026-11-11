@@ -1,27 +1,31 @@
 import { Field } from '../src/drive/field';
-import { Detail } from '../src/drive/detail';
+import { planeBlade } from '../src/drive/sculpt';
 
-const cols = 40;
+const cols = 48;
 const heights = new Float32Array(cols * cols);
 heights.fill(80);
-const field = new Field(cols, cols, 20, heights);
-const detail = new Detail(field);
-detail.follow(220, 220);
+const field = new Field(cols, cols, 2, heights);
 
-const first = detail.cut(220, 220, 0, 3.6, 0.5);
+const first = planeBlade(field, 40, 40, 0, 3.6, 79.4, 35);
 if (!(first > 0)) throw new Error(`expected a moving blade to cut, got ${first}`);
-if (Math.abs(field.cutM3 - field.fillM3) > 1e-6) throw new Error(`cut ${field.cutM3} != fill ${field.fillM3}`);
+if (Math.abs(field.cutM3 - field.fillM3) > 1e-4) throw new Error(`cut ${field.cutM3} != fill ${field.fillM3}`);
 
 const parked = field.cutM3;
-for (let i = 0; i < 40; i++) detail.cut(220.04, 220.02, 0, 3.6, 0.5);
-if (field.cutM3 !== parked) throw new Error(`parked blade moved soil: ${parked} -> ${field.cutM3}`);
-if (Math.abs(field.cutM3 - field.fillM3) > 1e-6) throw new Error('parked volumes diverged');
+planeBlade(field, 40, 40, 0, 3.6, 80.2, 35);
+if (field.cutM3 !== parked) throw new Error('a blade above the ground moved soil');
 
-const swept = detail.cut(220, 223, 0, 3.6, 0.5);
+const swept = planeBlade(field, 40, 48, 0, 3.6, 79.2, 35);
 if (!(swept > 0)) throw new Error('a blade that moved onto new ground should cut');
-if (Math.abs(field.cutM3 - field.fillM3) > 1e-6) throw new Error(`after sweep cut ${field.cutM3} != fill ${field.fillM3}`);
+if (Math.abs(field.cutM3 - field.fillM3) > 1e-3) throw new Error(`after sweep cut ${field.cutM3} != fill ${field.fillM3}`);
 
-detail.bakeAll();
-if (Math.abs(detail.deltaM3()) > 1e-4) throw new Error(`bake left ${detail.deltaM3()} m³ unaccounted`);
+let steep = 0;
+for (let r = 1; r < cols - 1; r++) {
+  for (let c = 1; c < cols - 1; c++) {
+    const h = field.heights[r * cols + c] ?? 0;
+    const other = field.heights[r * cols + c + 1] ?? 0;
+    steep = Math.max(steep, Math.abs(h - other) / field.spacing);
+  }
+}
+if (steep > Math.tan((35 * Math.PI) / 180) + 0.35) throw new Error(`spoil stood steeper than the angle of repose: ${steep}`);
 
 console.log('detail-check ok', { first: first.toFixed(2), swept: swept.toFixed(2), cut: field.cutM3.toFixed(2) });

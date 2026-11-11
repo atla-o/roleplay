@@ -1,11 +1,12 @@
 import * as Cesium from 'cesium';
 import { metersPerDegree, offsetDegrees } from './field';
 
-export type ViewId = 'orbit' | 'titan' | 'vehicle' | 'sky';
+export type ViewId = 'titan' | 'robot' | 'human';
 
-/** 550× a person. Eye height is 1.65 m times that, and the stride is a walking pace times that. */
-export const GIANT = 550;
-export const EYE_M = 1.65 * GIANT;
+/** Tall enough that a 4 km site is a few minutes on foot, and heavy enough to feel planted. */
+export const TITAN = 48;
+export const TITAN_EYE = 1.7 * TITAN;
+export const HUMAN_EYE = 1.8;
 
 export interface Anchor {
   lon: number;
@@ -40,6 +41,8 @@ export class Director {
   private chasePitch = 0;
   orbitRange = 9000;
   mouseIdle = 10;
+  /** Extra metres on the eye, used for a jump. */
+  eyeLift = 0;
   private blend = 1;
   private blendDur = 0.8;
   private arc = 0;
@@ -61,23 +64,16 @@ export class Director {
     this.mouseIdle = 0;
     const yaw = dx * 0.003;
     const pitch = dy * 0.0022;
-    if (view === 'orbit') {
-      this.orbitYaw += yaw;
-      this.orbitPitch = Math.max(-1.35, Math.min(-0.12, this.orbitPitch - pitch));
-      return;
-    }
-    if (view === 'vehicle') {
+    if (view === 'robot') {
       this.chaseYaw += yaw;
-      this.chasePitch = Math.max(-0.45, Math.min(0.35, this.chasePitch - pitch));
+      this.chasePitch = Math.max(-0.35, Math.min(0.55, this.chasePitch - pitch));
       return;
     }
     this.anchor.heading += yaw;
     this.anchor.pitch = Math.max(-1.2, Math.min(0.4, this.anchor.pitch - pitch));
   }
 
-  wheel(delta: number): void {
-    if (this.view === 'orbit') this.orbitRange = Math.max(400, Math.min(2_000_000, this.orbitRange * (delta > 0 ? 1.08 : 0.92)));
-  }
+  wheel(_delta: number): void {}
 
   get blending(): boolean {
     return this.blend < 1;
@@ -104,8 +100,7 @@ export class Director {
     this.blend = 0;
     this.blendDur = arc > 0 ? 1.15 : 0.8;
     this.arc = arc;
-    if (next !== 'vehicle') this.orbitYaw = 0;
-    if (next === 'vehicle') {
+    if (next === 'robot') {
       this.chaseYaw = 0;
       this.chasePitch = 0;
       this.snap = true;
@@ -114,7 +109,7 @@ export class Director {
 
   /** Move the giant or the sky camera across the same ground. Returns false if the slope is too steep. */
   walk(dt: number, throttle: number, strafe: number, ground: (lon: number, lat: number) => number, giant: boolean): void {
-    const speed = (giant ? 1.4 * GIANT : 70) * (Math.abs(throttle) > 1 ? 1 : 1);
+    const speed = (giant ? 0.55 * TITAN : 1.5) * (Math.abs(throttle) > 1 ? 1.8 : 1);
     const sprint = Math.abs(throttle) > 1.2 ? 1.65 : 1;
     const dist = speed * sprint * dt;
     const heading = this.anchor.heading;
@@ -133,7 +128,7 @@ export class Director {
 
   step(dt: number, groundAt: (lon: number, lat: number) => number, vehicle: VehiclePose | null): void {
     this.mouseIdle += dt;
-    if (this.view === 'vehicle' && this.mouseIdle > 1.5) {
+    if (this.view === 'robot' && this.mouseIdle > 1.5) {
       this.chaseYaw += (0 - this.chaseYaw) * (1 - Math.exp(-dt / 0.35));
     }
     const ground = groundAt(this.anchor.lon, this.anchor.lat);
@@ -153,8 +148,8 @@ export class Director {
     } else {
       this.applied = target;
     }
-    if (this.view === 'vehicle') {
-      const floor = groundAt(this.applied.lon, this.applied.lat) + 2.4;
+    if (this.view === 'robot' || this.view === 'human') {
+      const floor = groundAt(this.applied.lon, this.applied.lat) + (this.view === 'human' ? 1.2 : 2.2);
       if (this.applied.height < floor) this.applied.height = floor;
     }
     this.apply(this.applied);
@@ -162,19 +157,10 @@ export class Director {
 
   private targetShot(ground: number, vehicle: VehiclePose | null, groundAt: (lon: number, lat: number) => number): Shot {
     if (this.view === 'titan') {
-      return { lon: this.anchor.lon, lat: this.anchor.lat, height: ground + EYE_M, heading: this.anchor.heading, pitch: this.anchor.pitch, fov: 52 };
+      return { lon: this.anchor.lon, lat: this.anchor.lat, height: ground + TITAN_EYE + this.eyeLift, heading: this.anchor.heading, pitch: this.anchor.pitch, fov: 55 };
     }
-    if (this.view === 'sky') {
-      return { lon: this.anchor.lon, lat: this.anchor.lat, height: ground + 520, heading: this.anchor.heading, pitch: this.anchor.pitch, fov: 60 };
-    }
-    if (this.view === 'orbit') {
-      const pitch = this.orbitPitch;
-      const heading = this.anchor.heading + this.orbitYaw;
-      const pe = Math.sin(heading) * Math.cos(pitch);
-      const pn = Math.cos(heading) * Math.cos(pitch);
-      const pu = Math.sin(pitch);
-      const at = offsetDegrees(this.anchor.lat, this.anchor.lon, -pe * this.orbitRange, -pn * this.orbitRange);
-      return { lon: at.lon, lat: at.lat, height: Math.max(ground + 40, ground - pu * this.orbitRange), heading, pitch, fov: 55 };
+    if (this.view === 'human') {
+      return { lon: this.anchor.lon, lat: this.anchor.lat, height: ground + HUMAN_EYE + this.eyeLift, heading: this.anchor.heading, pitch: this.anchor.pitch, fov: 68 };
     }
     return this.chase(ground, vehicle, groundAt);
   }
@@ -184,8 +170,8 @@ export class Director {
     const floor = groundAt(pose.lon, pose.lat);
     const base = Math.max(floor + 1.15, Math.min(floor + 3.2, pose.up));
     const yaw = pose.heading + this.chaseYaw;
-    const back = 22;
-    const above = 7.5 + this.chasePitch * 2;
+    const back = 15;
+    const above = 4.6 + this.chasePitch * 3;
     const wantE = -Math.sin(yaw) * back;
     const wantN = -Math.cos(yaw) * back;
     if (this.snap) {
@@ -201,9 +187,9 @@ export class Director {
       this.camN = damp(this.camN, wantN, this.velN, 0.28, 1 / 60, (v) => { this.velN = v; });
       this.camU = damp(this.camU, above, this.velU, 0.28, 1 / 60, (v) => { this.velU = v; });
     }
-    const lookE = Math.sin(pose.heading) * 5;
-    const lookN = Math.cos(pose.heading) * 5;
-    const lookU = base + 1.4;
+    const lookE = Math.sin(pose.heading) * 16;
+    const lookN = Math.cos(pose.heading) * 16;
+    const lookU = base + 2.2;
     const pulled = this.pullIn(pose, lookE, lookN, lookU, this.camE, this.camN, base + this.camU, groundAt);
     let camE = lookE + (this.camE - lookE) * pulled;
     let camN = lookN + (this.camN - lookN) * pulled;
@@ -260,104 +246,6 @@ export class Director {
     const frustum = this.viewer.camera.frustum;
     if (frustum instanceof Cesium.PerspectiveFrustum) frustum.fov = Cesium.Math.toRadians(shot.fov);
   }
-}
-
-const mapCache = new WeakMap<HTMLCanvasElement, { key: string; canvas: HTMLCanvasElement }>();
-
-/** Top-down height shading of the ground under the player, plus the site rectangle and the machines. */
-export function drawMinimap(
-  canvas: HTMLCanvasElement,
-  anchor: Anchor,
-  sites: { name: string; west: number; south: number; east: number; north: number }[],
-  vehicles: { lon: number; lat: number }[],
-  sample: (lon: number, lat: number) => number | null,
-  revision: number,
-): void {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  const w = canvas.width;
-  const h = canvas.height;
-  const range = 3200;
-  const scale = metersPerDegree(anchor.lat);
-  const key = `${revision}:${Math.round(anchor.lon * 500)}:${Math.round(anchor.lat * 500)}`;
-  let cached = mapCache.get(canvas);
-  if (!cached || cached.key !== key) {
-    const shade = document.createElement('canvas');
-    shade.width = w;
-    shade.height = h;
-    const g = shade.getContext('2d');
-    if (g) {
-      const image = g.createImageData(w, h);
-      const mid = sample(anchor.lon, anchor.lat) ?? 200;
-      const step = 4;
-      for (let y = 0; y < h; y += step) {
-        const lat = anchor.lat + ((h / 2 - y) / (h / 2)) * (range / scale.lat);
-        const latN = anchor.lat + ((h / 2 - (y + step)) / (h / 2)) * (range / scale.lat);
-        for (let x = 0; x < w; x += step) {
-          const lon = anchor.lon + ((x - w / 2) / (w / 2)) * (range / scale.lon);
-          const lonE = anchor.lon + ((x + step - w / 2) / (w / 2)) * (range / scale.lon);
-          const height = sample(lon, lat);
-          let r = 42;
-          let gv = 52;
-          let b = 56;
-          if (height != null) {
-            const east = sample(lonE, lat);
-            const north = sample(lon, latN);
-            const riseE = east == null ? 0 : Math.max(-12, Math.min(12, east - height));
-            const riseN = north == null ? 0 : Math.max(-12, Math.min(12, north - height));
-            const light = Math.max(-16, Math.min(18, -(riseE + riseN) * 0.7));
-            const t = Math.max(0, Math.min(1, (height - (mid - 40)) / 110));
-            r = Math.max(0, Math.min(255, 92 + t * 120 + light));
-            gv = Math.max(0, Math.min(255, 78 + t * 96 + light));
-            b = Math.max(0, Math.min(255, 58 + t * 62 + light * 0.6));
-          }
-          for (let dy = 0; dy < step && y + dy < h; dy++) {
-            for (let dx = 0; dx < step && x + dx < w; dx++) {
-              const o = ((y + dy) * w + (x + dx)) * 4;
-              image.data[o] = r;
-              image.data[o + 1] = gv;
-              image.data[o + 2] = b;
-              image.data[o + 3] = 255;
-            }
-          }
-        }
-      }
-      g.putImageData(image, 0, 0);
-    }
-    cached = { key, canvas: shade };
-    mapCache.set(canvas, cached);
-  }
-  ctx.clearRect(0, 0, w, h);
-  ctx.drawImage(cached.canvas, 0, 0);
-  const project = (lon: number, lat: number) => ({
-    x: w / 2 + ((lon - anchor.lon) * scale.lon / range) * (w / 2),
-    y: h / 2 - ((lat - anchor.lat) * scale.lat / range) * (h / 2),
-  });
-  ctx.strokeStyle = 'rgba(244, 247, 248, 0.9)';
-  ctx.lineWidth = 1;
-  for (const site of sites) {
-    const a = project(site.west, site.south);
-    const b = project(site.east, site.north);
-    ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-  }
-  ctx.fillStyle = '#f0d78c';
-  for (const vehicle of vehicles) {
-    const p = project(vehicle.lon, vehicle.lat);
-    if (p.x < 2 || p.y < 2 || p.x > w - 2 || p.y > h - 2) continue;
-    ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
-  }
-  ctx.save();
-  ctx.translate(w / 2, h / 2);
-  ctx.rotate(anchor.heading);
-  ctx.fillStyle = '#f4f7f8';
-  ctx.beginPath();
-  ctx.moveTo(0, -8);
-  ctx.lineTo(5, 6);
-  ctx.lineTo(0, 3);
-  ctx.lineTo(-5, 6);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
 }
 
 function damp(current: number, target: number, vel: number, smooth: number, dt: number, setVel: (v: number) => void): number {

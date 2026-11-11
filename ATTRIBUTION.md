@@ -2,13 +2,15 @@
 
 Roleplay is a pure digital simulation built from open elevation data with no land claim or ground impact. The basin is framed only as **Northern Canada (Polar Desert Basin, 4 × 4 km)**. It is published with the Creation division at [atlas.rehab](https://atlas.rehab/).
 
-The measured window is EPSG:3413, X −1,116,740 m to −1,112,740 m, Y −1,136,011 m to −1,132,011 m. The centre is 75.3971°N, 89.509°W.
+The basin window is EPSG:3413, southwest corner X −1,116,740 m, Y −1,136,008 m, 2000 by 2000 posts at 2 m. The centre is about 75.3971°N, 89.5091°W.
 
 ## ArcticDEM v4.1
 
-Elevation is the public ArcticDEM v4.1 2 m mosaic (collection `arcticdem-mosaics-v4.1-2m`, STAC `https://stac.pgc.umn.edu/api/v1`), resampled to a 500 × 500 post grid.
+Elevation on Polar Desert Basin is the public ArcticDEM v4.1 2 m mosaic, tile `29_29_2_2_2m_v4.1`, read at native 2 m. Nothing is invented between those posts. The mesh draws every post within about 240 m of the body and every eighth post farther away, which is 16 m, still the same measurements.
 
 Porter et al. 2023. ArcticDEM, Version 4.1. Polar Geospatial Center, University of Minnesota. https://doi.org/10.7910/DVN/3VDC4W
+
+DEMs were created from DigitalGlobe, Inc. imagery and funded under National Science Foundation awards 1043681, 1559691, and 1542736.
 
 Licence: [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/).
 
@@ -36,17 +38,19 @@ Oceans are held at sea level so the giant walks the water surface rather than th
 
 ## World imagery
 
-Sentinel-2 cloudless by [EOX IT Services GmbH](https://s2maps.eu) (CC BY 4.0), containing modified Copernicus Sentinel data 2021. The fallback mosaic is Natural Earth II, shipped with CesiumJS and in the public domain.
+The ground picture on both squares, and the globe around them, is Sentinel-2 cloudless 2021 by [EOX IT Services GmbH](https://s2maps.eu) (CC BY 4.0), containing modified Copernicus Sentinel data 2021. The squares use a cropped mosaic of those tiles. The fallback mosaic is Natural Earth II, shipped with CesiumJS and in the public domain. No finer open orthophoto was found for either square under a permissive licence, so nothing sharper than Sentinel-2 is draped.
 
 ## Île René-Levasseur
 
-The second measured square is the island in the Manicouagan ring reservoir, Quebec. It is research terrain and an emblem of the O, not land to reshape.
+The playable square is inside the Louis-Babel Ecological Reserve, on the island in the Manicouagan reservoir, Quebec. It is research terrain. The reserve sits in the Manicouagan-Uapishka UNESCO Biosphere Reserve and in Nitassinan of the Innu of Pessamit.
 
-Place: Louis-Babel Ecological Reserve, Réserve de biodiversité de la Météorite, Manicouagan-Uapishka UNESCO Biosphere Reserve, and Nitassinan of the Innu of Pessamit. The reservoir is held by Hydro-Québec's Daniel-Johnson Dam. Mont de Babel is about 952 m.
+Elevation is the NRCan HRDEM 1 m DTM, project `Reserve_Ecologique_Louis_Babel_2024`, tile `dtm_1m_utm19_e_0_169`, NAD83(CSRS) / UTM zone 19N. The committed grid is 2000 by 2000 posts at 2 m: each post is the average of the 1 m posts under it, not a made-up detail. The viewer treats that UTM frame as WGS84, which is about a metre at this latitude. ArcticDEM does not cover 51°N. The 4 km square does not include the reservoir shore; the water of the ring is in the surrounding Sentinel-2 picture, not in this height grid.
 
-Elevation on the tile is the NRCan HRDEM mosaic 1 m DTM, resampled. Licence: Open Government Licence – Canada. ArcticDEM does not cover 51°N. NRCan MRDEM-30 is sampled on the same window for the coarser national surface (Open Government Licence – Canada; Copernicus GLO-30 is an input to MRDEM). Quebec's own 1 m LiDAR sheets (CC BY 4.0, Données Québec) were not downloaded one by one; the HRDEM mosaic is the lidar-derived national surface over this island.
+Licence: [Open Government Licence – Canada](https://open.canada.ca/en/open-government-licence-canada). Contains information licensed under the Open Government Licence – Canada.
 
-Water on the tile is the water class of NRCan 2020 Land Cover of Canada (Open Government Licence – Canada). GRHQ and NHN lines were not clipped into this build.
+## What is smoother than the source
+
+Sentinel-2 color is about 10 m. Where the mesh asks for a color between those pixels, the picture is bilinear. A faint shading grain, a few metres across, is drawn on top so the ground is not a flat poster. It does not move the posts and it does not repaint the satellite colors into a new map. The outer 80 m of each square eases onto the global DEM so the tile does not end as a cliff. That global DEM is the Mapzen/Tilezen composite below, and it is not the near-field source.
 
 ## Species layer
 
@@ -54,11 +58,9 @@ Occurrence points in `public/data/occurrences.json` were retrieved from the [GBI
 
 ## Viewer
 
-The world is one CesiumJS scene (Apache-2.0). Orbit, the site overview, and the driver camera read the same heightfield. There is no second scene and no reload when the camera flies from orbit to the ground.
+The world is one CesiumJS scene (Apache-2.0). Titan, the robot, and the human stand on the same posts.
 
-Vehicles are a raycast chassis from [cannon-es](https://github.com/pmndrs/cannon-es) 0.20.0 (MIT). The dozer pushes soil ahead of the blade on a 1 m grid in a 256 m window. When that window slides, or the driver gets out, the edit is baked into the coarse heightfield by volume. Cut volume, fill volume, and the load in the machines are the same soil.
-
-The engine and track tone is synthesized in the browser from oscillators. It is not a sampled recording. It stays muted until the Settings checkbox is turned on.
+The robot is a raycast chassis from [cannon-es](https://github.com/pmndrs/cannon-es) 0.20.0 (MIT). The blade cuts the 2 m posts and lays that volume down ahead of it. Spoil that would stand steeper than the angle of repose slumps sideways, and the volume stays in the field. On the basin that angle is 35° and the bulk density used for the slowing force is 1.8 t/m³, the sandy-gravel range in French, The Periglacial Environment (2007), and in Das, Principles of Geotechnical Engineering. On the island the angle is 32° and the density is 1.7 t/m³, the loose sandy-till end of that same range. These are not a lab sample from either square.
 
 The machine meshes are Kenney's Car Kit (`tractor-shovel.glb`, `tractor.glb`, `garbage-truck.glb`) and the shared `models/Textures/colormap.png` those files reference, [CC0](https://creativecommons.org/publicdomain/zero/1.0/). Credit Kenney, https://kenney.nl/assets/car-kit. No Blender or other GPL program code is included. The texture sits beside the models at the path the glTF asks for, so it resolves under a nested preview base.
 

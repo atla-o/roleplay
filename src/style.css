@@ -79,6 +79,8 @@ canvas { display: block; }
   background: rgba(255, 255, 255, 0.04);
 }
 .tool:hover, .text-btn:hover { background: rgba(255, 255, 255, 0.04); }
+#open-settings { display: inline-flex; align-items: center; gap: 6px; width: auto; }
+#open-settings svg { display: block; }
 
 .inspector {
   top: 78px; right: 10px; bottom: 92px; width: 300px;

@@ -44,7 +44,7 @@ The world is one CesiumJS scene (Apache-2.0). Orbit, the site overview, and the 
 
 Vehicles are a raycast chassis from [cannon-es](https://github.com/pmndrs/cannon-es) 0.20.0 (MIT). The dozer pushes soil ahead of the blade. The excavator holds soil in a bucket. The hauler dumps it. Cut volume, fill volume, and the load in the machines are the same soil.
 
-The machine meshes are Kenney's Car Kit (`tractor-shovel.glb`, `tractor.glb`, `garbage-truck.glb`), [CC0](https://creativecommons.org/publicdomain/zero/1.0/). Credit Kenney, https://kenney.nl/assets/car-kit. No Blender or other GPL program code is included.
+The machine meshes are Kenney's Car Kit (`tractor-shovel.glb`, `tractor.glb`, `garbage-truck.glb`) and the shared `models/Textures/colormap.png` those files reference, [CC0](https://creativecommons.org/publicdomain/zero/1.0/). Credit Kenney, https://kenney.nl/assets/car-kit. No Blender or other GPL program code is included. The texture sits beside the models at the path the glTF asks for, so it resolves under a nested preview base.
 
 [Steel](https://github.com/skild-ai/steel) (Apache-2.0, also in NVIDIA Newton) is a rigid-body solver for batched robot manipulation. Its browser build is WebGPU ([steel-webgpu](https://github.com/skild-ai/steel-webgpu)), not WASM, and it does not sculpt a heightfield. It is not linked into this app.
 

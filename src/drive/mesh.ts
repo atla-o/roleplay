@@ -1,7 +1,47 @@
 import * as Cesium from 'cesium';
-import type { Field } from './field';
+import { offsetDegrees, type Field } from './field';
 
-function surface(positions: Float64Array, index: number[], modelMatrix: Cesium.Matrix4, color: Cesium.Color, translucent: boolean): Cesium.Primitive {
+/** How far the measured tile eases down onto the globe, so the edge is a slope rather than a cliff. */
+export const FEATHER_M = 12_000;
+
+export interface CoverHole {
+  east: number;
+  north: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Height of the feather outside a patch, in the patch's local metres.
+ * Null when the point is inside the measured grid or beyond the feather.
+ */
+export function feathered(field: Field, east: number, north: number): number | null {
+  const width = (field.cols - 1) * field.spacing;
+  const height = (field.rows - 1) * field.spacing;
+  const dx = east < 0 ? -east : east > width ? east - width : 0;
+  const dy = north < 0 ? -north : north > height ? north - height : 0;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= 0 || dist > FEATHER_M) return null;
+  const edge = field.sample(Math.max(0, Math.min(width, east)), Math.max(0, Math.min(height, north)));
+  const t = dist / FEATHER_M;
+  const s = t * t * (3 - 2 * t);
+  return edge * (1 - s);
+}
+
+function appearance(color: Cesium.Color, translucent: boolean): Cesium.PerInstanceColorAppearance {
+  return new Cesium.PerInstanceColorAppearance({
+    flat: false,
+    translucent,
+    closed: false,
+    renderState: {
+      cull: { enabled: false },
+      depthTest: { enabled: true },
+      depthMask: !translucent,
+    },
+  });
+}
+
+function primitive(positions: Float64Array, index: number[], color: Cesium.Color, translucent: boolean): Cesium.Primitive {
   const geometry = new Cesium.Geometry({
     attributes: {
       position: new Cesium.GeometryAttribute({
@@ -12,56 +52,139 @@ function surface(positions: Float64Array, index: number[], modelMatrix: Cesium.M
     } as Cesium.GeometryAttributes,
     indices: index.length > 65535 ? new Uint32Array(index) : new Uint16Array(index),
     primitiveType: Cesium.PrimitiveType.TRIANGLES,
-    boundingSphere: Cesium.BoundingSphere.fromVertices(Array.from(positions)),
+    boundingSphere: Cesium.BoundingSphere.fromVertices(positions as unknown as number[]),
   });
   Cesium.GeometryPipeline.computeNormal(geometry);
   return new Cesium.Primitive({
     geometryInstances: new Cesium.GeometryInstance({
       geometry,
-      modelMatrix,
-      attributes: {
-        color: Cesium.ColorGeometryInstanceAttribute.fromColor(color),
-      },
+      modelMatrix: Cesium.Matrix4.IDENTITY,
+      attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(color) },
     }),
-    appearance: new Cesium.PerInstanceColorAppearance({
-      flat: false,
-      translucent,
-      closed: false,
-    }),
+    appearance: appearance(color, translucent),
     asynchronous: false,
   });
 }
 
-export function terrainPrimitive(
-  field: Field,
-  west: number,
-  south: number,
-  depth?: Float32Array,
-): { primitive: Cesium.Primitive; water: Cesium.Primitive | null } {
-  const { cols, rows, spacing } = field;
-  const positions = new Float64Array(cols * rows * 3);
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const i = field.index(c, r);
-      const o = i * 3;
-      positions[o] = c * spacing;
-      positions[o + 1] = r * spacing;
-      positions[o + 2] = field.heights[i] ?? 0;
-    }
-  }
-  const index: number[] = [];
-  for (let r = 0; r < rows - 1; r++) {
-    for (let c = 0; c < cols - 1; c++) {
-      const i = field.index(c, r);
-      index.push(i, i + 1, i + cols, i + 1, i + cols + 1, i + cols);
-    }
-  }
-  const modelMatrix = Cesium.Transforms.eastNorthUpToFixedFrame(Cesium.Cartesian3.fromDegrees(west, south, 0));
-  const primitive = surface(positions, index, modelMatrix, Cesium.Color.fromCssColorString('#d7c4a8'), false);
-  return { primitive, water: depth ? waterPrimitive(field, depth, modelMatrix) : null };
+/** Ease full relief into the edge height so the measured grid does not end in a hard line. */
+function displayHeight(field: Field, c: number, r: number): number {
+  c = Math.max(0, Math.min(field.cols - 1, c));
+  r = Math.max(0, Math.min(field.rows - 1, r));
+  const h = field.heights[field.index(c, r)] ?? 0;
+  const band = Math.max(8, Math.round((Math.min(field.cols, field.rows) - 1) * 0.2));
+  const inset = Math.min(c, r, field.cols - 1 - c, field.rows - 1 - r);
+  if (inset >= band) return h;
+  const s = inset / band;
+  const fade = s * s * (3 - 2 * s);
+  const cc = Math.max(band, Math.min(field.cols - 1 - band, c));
+  const rr = Math.max(band, Math.min(field.rows - 1 - band, r));
+  const inner = field.heights[field.index(cc, rr)] ?? h;
+  return inner * fade + h * (1 - fade);
 }
 
-function waterPrimitive(field: Field, depth: Float32Array, modelMatrix: Cesium.Matrix4): Cesium.Primitive | null {
+function writeVertex(west: number, south: number, east: number, north: number, up: number, positions: number[]): void {
+  const ll = offsetDegrees(south, west, east, north);
+  const c = Cesium.Cartesian3.fromDegrees(ll.lon, ll.lat, Math.max(0, up));
+  positions.push(c.x, c.y, c.z);
+}
+
+/** A site mesh split into chunks. Edits rebuild a chunk, never the whole tile, and not on a camera change. */
+export class ChunkLayer {
+  private readonly chunks = new Map<string, Cesium.Primitive>();
+  private water: Cesium.Primitive | null = null;
+  private apron: Cesium.Primitive | null = null;
+  private waterDirty = false;
+  private builtAt = 0;
+  private waterAt = 0;
+
+  constructor(
+    private readonly viewer: Cesium.Viewer,
+    readonly field: Field,
+    readonly west: number,
+    readonly south: number,
+    private depth: Float32Array,
+    private readonly hole: CoverHole | null = null,
+  ) {
+    this.field.touchAll();
+    this.apron = apronPrimitive(field, west, south);
+    this.viewer.scene.primitives.add(this.apron);
+    this.flush(400, true);
+    this.waterDirty = true;
+    this.flushWater(true);
+  }
+
+  setDepth(depth: Float32Array): void {
+    this.depth = depth;
+    this.waterDirty = true;
+  }
+
+  /** Rebuild a few dirty chunks. Pass `now` so a blade scrape cannot upload a mesh every frame. */
+  flush(max = 2, force = false): void {
+    const now = performance.now();
+    if (!force && (this.field.dirtyChunks.size === 0 || now - this.builtAt < 140)) {
+      this.flushWater(false);
+      return;
+    }
+    const built: string[] = [];
+    for (const key of this.field.dirtyChunks) {
+      if (built.length >= max) break;
+      built.push(key);
+    }
+    for (const key of built) this.field.dirtyChunks.delete(key);
+    for (const key of built) {
+      const [cs, rs] = key.split(':');
+      const c0 = Number(cs) * this.field.chunk;
+      const r0 = Number(rs) * this.field.chunk;
+      const previous = this.chunks.get(key);
+      if (previous) this.viewer.scene.primitives.remove(previous);
+      const next = chunkPrimitive(this.field, this.west, this.south, c0, r0, this.hole);
+      if (next) {
+        this.viewer.scene.primitives.add(next);
+        this.chunks.set(key, next);
+      } else this.chunks.delete(key);
+    }
+    if (built.length) this.builtAt = now;
+    this.field.dirty = this.field.dirtyChunks.size > 0;
+    this.flushWater(false);
+  }
+
+  private flushWater(force: boolean): void {
+    if (!this.waterDirty) return;
+    const now = performance.now();
+    if (!force && (this.field.dirtyChunks.size > 0 || now - this.waterAt < 3000)) return;
+    if (this.water) this.viewer.scene.primitives.remove(this.water);
+    this.water = waterPrimitive(this.field, this.west, this.south, this.depth);
+    if (this.water) this.viewer.scene.primitives.add(this.water);
+    this.waterDirty = false;
+    this.waterAt = now;
+  }
+}
+
+function chunkPrimitive(field: Field, west: number, south: number, c0: number, r0: number, hole: CoverHole | null): Cesium.Primitive | null {
+  const c1 = Math.min(field.cols - 1, c0 + field.chunk);
+  const r1 = Math.min(field.rows - 1, r0 + field.chunk);
+  const positions: number[] = [];
+  const index: number[] = [];
+  const stride = c1 - c0 + 1;
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      writeVertex(west, south, c * field.spacing, r * field.spacing, displayHeight(field, c, r), positions);
+    }
+  }
+  for (let r = r0; r < r1; r++) {
+    for (let c = c0; c < c1; c++) {
+      const midE = (c + 0.5) * field.spacing;
+      const midN = (r + 0.5) * field.spacing;
+      if (hole && midE > hole.east && midN > hole.north && midE < hole.east + hole.width && midN < hole.north + hole.height) continue;
+      const i = (r - r0) * stride + (c - c0);
+      index.push(i, i + 1, i + stride, i + 1, i + stride + 1, i + stride);
+    }
+  }
+  if (!index.length) return null;
+  return primitive(new Float64Array(positions), index, Cesium.Color.fromCssColorString('#d2c0a4'), false);
+}
+
+function waterPrimitive(field: Field, west: number, south: number, depth: Float32Array): Cesium.Primitive | null {
   const positions: number[] = [];
   const index: number[] = [];
   const { cols, rows, spacing } = field;
@@ -74,119 +197,85 @@ function waterPrimitive(field: Field, depth: Float32Array, modelMatrix: Cesium.M
       for (const corner of [i, i + 1, i + cols, i + cols + 1]) {
         const cc = corner % cols;
         const rr = Math.floor(corner / cols);
-        positions.push(cc * spacing, rr * spacing, (field.heights[corner] ?? 0) + (depth[corner] ?? 0) + 0.25);
+        writeVertex(west, south, cc * spacing, rr * spacing, (field.heights[corner] ?? 0) + (depth[corner] ?? 0) + 0.4, positions);
       }
       index.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
     }
   }
   if (!index.length) return null;
-  return surface(new Float64Array(positions), index, modelMatrix, Cesium.Color.fromCssColorString('#2f7ea3').withAlpha(0.72), true);
+  return primitive(new Float64Array(positions), index, Cesium.Color.fromCssColorString('#2f7ea3').withAlpha(0.72), true);
 }
 
-/** A site mesh split into chunks so a blade edit does not rebuild the whole field. */
-export class ChunkLayer {
-  private readonly chunks = new Map<string, Cesium.Primitive>();
-  private water: Cesium.Primitive | null = null;
-  private skirt: Cesium.Primitive | null = null;
-  private waterDirty = false;
-
-  constructor(
-    private readonly viewer: Cesium.Viewer,
-    readonly field: Field,
-    readonly west: number,
-    readonly south: number,
-    private depth: Float32Array,
-  ) {
-    this.field.touchAll();
-    this.waterDirty = true;
-    this.skirt = skirtPrimitive(field, west, south);
-    this.viewer.scene.primitives.add(this.skirt);
-    this.flush(64);
-  }
-
-  setDepth(depth: Float32Array): void {
-    this.depth = depth;
-    this.waterDirty = true;
-  }
-
-  flush(max = 4): void {
-    const modelMatrix = Cesium.Transforms.eastNorthUpToFixedFrame(Cesium.Cartesian3.fromDegrees(this.west, this.south, 0));
-    let built = 0;
-    for (const key of this.field.dirtyChunks) {
-      if (built >= max) break;
-      this.field.dirtyChunks.delete(key);
-      const [cs, rs] = key.split(':');
-      const c0 = Number(cs) * this.field.chunk;
-      const r0 = Number(rs) * this.field.chunk;
-      const previous = this.chunks.get(key);
-      if (previous) this.viewer.scene.primitives.remove(previous);
-      const primitive = chunkPrimitive(this.field, c0, r0, modelMatrix);
-      this.viewer.scene.primitives.add(primitive);
-      this.chunks.set(key, primitive);
-      built += 1;
-    }
-    if (this.waterDirty && this.field.dirtyChunks.size === 0) {
-      if (this.water) this.viewer.scene.primitives.remove(this.water);
-      const mesh = terrainPrimitive(this.field, this.west, this.south, this.depth);
-      this.water = mesh.water;
-      if (this.water) this.viewer.scene.primitives.add(this.water);
-      this.viewer.scene.primitives.remove(mesh.primitive);
-      this.waterDirty = false;
-    }
-    this.field.dirty = this.field.dirtyChunks.size > 0;
-  }
-}
-
-function chunkPrimitive(field: Field, c0: number, r0: number, modelMatrix: Cesium.Matrix4): Cesium.Primitive {
-  const c1 = Math.min(field.cols - 1, c0 + field.chunk);
-  const r1 = Math.min(field.rows - 1, r0 + field.chunk);
-  const positions: number[] = [];
-  const index: number[] = [];
-  const id: number[] = [];
-  for (let r = r0; r <= r1; r++) {
-    for (let c = c0; c <= c1; c++) {
-      id.push(field.index(c, r));
-      positions.push(c * field.spacing, r * field.spacing, field.heights[field.index(c, r)] ?? 0);
-    }
-  }
-  const stride = c1 - c0 + 1;
-  for (let r = r0; r < r1; r++) {
-    for (let c = c0; c < c1; c++) {
-      const i = (r - r0) * stride + (c - c0);
-      index.push(i, i + 1, i + stride, i + 1, i + stride + 1, i + stride);
-    }
-  }
-  void id;
-  return surface(new Float64Array(positions), index, modelMatrix, Cesium.Color.fromCssColorString('#d2c0a4'), false);
-}
-
-export function skirtPrimitive(field: Field, west: number, south: number): Cesium.Primitive {
+/** Ease the measured edge down to the ellipsoid over FEATHER_M so the tile has no square cliff and no underside. */
+function apronPrimitive(field: Field, west: number, south: number): Cesium.Primitive {
+  const rings = 12;
+  const reach = FEATHER_M;
   const { cols, rows, spacing } = field;
-  const reach = Math.max(1200, spacing * 8);
+  const width = (cols - 1) * spacing;
+  const height = (rows - 1) * spacing;
   const positions: number[] = [];
   const index: number[] = [];
-  const edge = (c: number, r: number, outwardEast: number, outwardNorth: number) => {
-    const h = field.heights[field.index(c, r)] ?? 0;
-    const base = positions.length / 3;
-    positions.push(c * spacing, r * spacing, h, c * spacing + outwardEast, r * spacing + outwardNorth, Math.max(0, h - 140));
-    return base;
+  const add = (east: number, north: number, up: number) => {
+    const id = positions.length / 3;
+    writeVertex(west, south, east, north, up, positions);
+    return id;
   };
-  for (let c = 0; c < cols - 1; c++) {
-    const south0 = edge(c, 0, 0, -reach);
-    const south1 = edge(c + 1, 0, 0, -reach);
-    index.push(south0, south1, south0 + 1, south1, south1 + 1, south0 + 1);
-    const north0 = edge(c, rows - 1, 0, reach);
-    const north1 = edge(c + 1, rows - 1, 0, reach);
-    index.push(north0, north0 + 1, north1, north1, north0 + 1, north1 + 1);
-  }
-  for (let r = 0; r < rows - 1; r++) {
-    const west0 = edge(0, r, -reach, 0);
-    const west1 = edge(0, r + 1, -reach, 0);
-    index.push(west0, west0 + 1, west1, west1, west0 + 1, west1 + 1);
-    const east0 = edge(cols - 1, r, reach, 0);
-    const east1 = edge(cols - 1, r + 1, reach, 0);
-    index.push(east0, east1, east0 + 1, east1, east1 + 1, east0 + 1);
-  }
-  const modelMatrix = Cesium.Transforms.eastNorthUpToFixedFrame(Cesium.Cartesian3.fromDegrees(west, south, 0));
-  return surface(new Float64Array(positions), index, modelMatrix, Cesium.Color.fromCssColorString('#b7c3c8'), false);
+  const drop = (edge: number, k: number) => {
+    const t = k / rings;
+    const s = t * t * (3 - 2 * t);
+    return edge * (1 - s);
+  };
+  const side = (count: number, at: (i: number, dist: number) => [number, number]) => {
+    const ids: number[][] = [];
+    for (let k = 0; k <= rings; k++) {
+      const line: number[] = [];
+      const dist = (k / rings) * reach;
+      for (let i = 0; i < count; i++) {
+        const edgeH = displayHeight(field, Math.round(at(i, 0)[0] / field.spacing), Math.round(at(i, 0)[1] / field.spacing));
+        const [east, north] = at(i, dist);
+        line.push(add(east, north, drop(edgeH, k)));
+      }
+      ids.push(line);
+    }
+    for (let k = 0; k < rings; k++) {
+      for (let i = 0; i < count - 1; i++) {
+        const a = ids[k][i] ?? 0;
+        const b = ids[k][i + 1] ?? 0;
+        const c = ids[k + 1]?.[i] ?? 0;
+        const d = ids[k + 1]?.[i + 1] ?? 0;
+        index.push(a, b, c, b, d, c);
+      }
+    }
+  };
+  side(cols, (i, dist) => [i * spacing, -dist]);
+  side(cols, (i, dist) => [i * spacing, height + dist]);
+  side(rows, (i, dist) => [-dist, i * spacing]);
+  side(rows, (i, dist) => [width + dist, i * spacing]);
+  const corner = (ox: number, oy: number, a0: number, a1: number, edgeH: number) => {
+    const segs = 8;
+    const ids: number[][] = [];
+    for (let k = 0; k <= rings; k++) {
+      const line: number[] = [];
+      const dist = (k / rings) * reach;
+      for (let s = 0; s <= segs; s++) {
+        const ang = a0 + ((a1 - a0) * s) / segs;
+        line.push(add(ox + Math.cos(ang) * dist, oy + Math.sin(ang) * dist, drop(edgeH, k)));
+      }
+      ids.push(line);
+    }
+    for (let k = 0; k < rings; k++) {
+      for (let s = 0; s < segs; s++) {
+        const a = ids[k][s] ?? 0;
+        const b = ids[k][s + 1] ?? 0;
+        const c = ids[k + 1]?.[s] ?? 0;
+        const d = ids[k + 1]?.[s + 1] ?? 0;
+        index.push(a, c, b, b, c, d);
+      }
+    }
+  };
+  corner(0, 0, Math.PI, Math.PI * 1.5, displayHeight(field, 0, 0));
+  corner(width, 0, Math.PI * 1.5, Math.PI * 2, displayHeight(field, cols - 1, 0));
+  corner(width, height, 0, Math.PI * 0.5, displayHeight(field, cols - 1, rows - 1));
+  corner(0, height, Math.PI * 0.5, Math.PI, displayHeight(field, 0, rows - 1));
+  return primitive(new Float64Array(positions), index, Cesium.Color.fromCssColorString('#c4b59a'), false);
 }

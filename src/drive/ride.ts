@@ -45,7 +45,9 @@ export class Yard {
     this.data = [];
     for (let c = 0; c < field.cols; c++) {
       const column: number[] = [];
-      for (let r = 0; r < field.rows; r++) column.push(field.heights[field.index(c, r)] ?? 0);
+      // Cannon's local Y becomes world −Z after the ground rotation, then we shift it.
+      // Store rows so world Z increases north, matching the mesh.
+      for (let y = 0; y < field.rows; y++) column.push(field.heights[field.index(c, field.rows - 1 - y)] ?? 0);
       this.data.push(column);
     }
     this.shape = new CANNON.Heightfield(this.data, { elementSize: field.spacing });
@@ -64,7 +66,7 @@ export class Yard {
     const chassis = new CANNON.Body({ mass: spec.mass });
     chassis.addShape(new CANNON.Box(new CANNON.Vec3(spec.width / 2, 0.7, spec.length / 2)), new CANNON.Vec3(0, 0.55, 0));
     const ground = this.field.sample(east, north);
-    chassis.position.set(east, ground + 2.4, north);
+    chassis.position.set(east, ground + 1.7, north);
     this.world.addBody(chassis);
     const vehicle = new CANNON.RaycastVehicle({
       chassisBody: chassis,
@@ -124,12 +126,15 @@ export class Yard {
     return (Math.atan2(ahead - here, 14) * 180) / Math.PI;
   }
 
+  /** Metres the cutting edge sits below the grade. Positive cuts. It does not follow a flying chassis. */
   bladeDepth(rig: Rig): number {
-    const pose = this.pose(rig);
-    const spec = SPECS[rig.kind];
-    const reach = spec.length / 2 + 1.2;
-    const ground = this.field.sample(pose.east + Math.sin(pose.heading) * reach, pose.north + Math.cos(pose.heading) * reach);
-    return ground - this.edgeY(pose.up, rig);
+    return Math.max(-1.2, Math.min(1.6, -Math.sin(rig.bladeAngle) * 1.6));
+  }
+
+  /** Run the suspension onto the heightfield before anyone drives. */
+  rest(): void {
+    const parked: DriveInput = { throttle: 0, steer: 0, brake: true, raise: false, lower: false, dig: false, dump: false };
+    for (let i = 0; i < 40; i++) this.step(1 / 60, null, parked);
   }
 
   step(dt: number, active: Rig | null, input: DriveInput): void {
@@ -139,6 +144,8 @@ export class Yard {
       this.substep(h, active, input);
       this.accumulator -= h;
     }
+    this.plant();
+    if (this.field.dirty) this.syncHeights();
   }
 
   private substep(dt: number, active: Rig | null, input: DriveInput): void {
@@ -154,7 +161,7 @@ export class Yard {
       const limited = Math.abs(pose.speed) > spec.maxKmh && input.throttle > 0 ? 0 : target;
       rig.applied += (limited - rig.applied) * (1 - Math.exp(-dt / 0.35));
       const steer = drive ? Math.max(-1, Math.min(1, input.steer)) : 0;
-      const brake = drive && input.brake ? spec.mass * 0.35 : Math.abs(input.throttle) < 0.05 && drive ? spec.mass * 0.04 : 0;
+      const brake = !drive || input.brake ? spec.mass * 0.45 : Math.abs(input.throttle) < 0.05 ? spec.mass * 0.05 : 0;
       this.driveWheels(rig, spec, -rig.applied, steer, brake);
       if (climbing > 34 && drive) {
         const body = rig.vehicle.chassisBody;
@@ -163,7 +170,39 @@ export class Yard {
       if (drive) this.work(rig, input, dt, pose, spec);
     }
     this.world.step(dt, undefined, 2);
-    if (this.field.dirty) this.syncHeights();
+  }
+
+  private plant(): void {
+    const spanE = (this.field.cols - 1) * this.field.spacing;
+    const spanN = (this.field.rows - 1) * this.field.spacing;
+    const margin = Math.max(8, this.field.spacing);
+    for (const rig of this.rigs) {
+      const body = rig.vehicle.chassisBody;
+      const x = Math.max(margin, Math.min(spanE - margin, body.position.x));
+      const z = Math.max(margin, Math.min(spanN - margin, body.position.z));
+      const ground = this.field.sample(x, z);
+      let y = body.position.y;
+      if (y < ground + 0.8) {
+        y = ground + 1.15;
+        if (body.velocity.y < 0) body.velocity.y = 0;
+      } else if (y > ground + 3.4) {
+        y = ground + 1.8;
+        body.velocity.y = 0;
+        body.velocity.x *= 0.6;
+        body.velocity.z *= 0.6;
+      }
+      const up = new CANNON.Vec3(0, 1, 0);
+      body.quaternion.vmult(up, up);
+      if (up.y < 0.4) {
+        const forward = new CANNON.Vec3(0, 0, 1);
+        body.quaternion.vmult(forward, forward);
+        const heading = Math.atan2(forward.x, forward.z);
+        body.quaternion.setFromEuler(0, heading, 0);
+        body.angularVelocity.set(0, 0, 0);
+        y = ground + 1.5;
+      }
+      body.position.set(x, y, z);
+    }
   }
 
   private driveWheels(rig: Rig, spec: (typeof SPECS)[RigKind], force: number, steer: number, brake: number): void {
@@ -186,10 +225,6 @@ export class Yard {
       vehicle.applyEngineForce(0, 1);
     }
     for (let wheel = 0; wheel < 4; wheel++) vehicle.setBrake(brake, wheel);
-  }
-
-  private edgeY(up: number, rig: Rig): number {
-    return up - 1.15 + Math.sin(rig.bladeAngle) * 2.6;
   }
 
   private work(rig: Rig, input: DriveInput, dt: number, pose: ReturnType<Yard['pose']>, spec: (typeof SPECS)[RigKind]): void {
@@ -228,7 +263,7 @@ export class Yard {
     for (let c = 0; c < cols; c++) {
       const column = this.data[c];
       if (!column) continue;
-      for (let r = 0; r < rows; r++) column[r] = this.field.heights[this.field.index(c, r)] ?? 0;
+      for (let y = 0; y < rows; y++) column[y] = this.field.heights[this.field.index(c, rows - 1 - y)] ?? 0;
     }
     this.shape.update();
   }

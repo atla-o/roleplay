@@ -2,7 +2,7 @@ import * as Cesium from 'cesium';
 import { decodeGrayPng } from '../load/png';
 import { solveWater, type WaterConfig } from '../sim/water';
 import { Field, metersPerDegree, offsetDegrees, resampleNorthUp } from './field';
-import { ChunkLayer } from './mesh';
+import { ChunkLayer, feathered, type CoverHole } from './mesh';
 import { raindrops } from './sculpt';
 import { Yard, type DriveInput, type Rig, type RigKind } from './ride';
 import { Director, drawMinimap, type ViewId } from './views';
@@ -15,6 +15,7 @@ interface Patch {
   heightM: number;
   depth: Float32Array;
   layer: ChunkLayer | null;
+  hole: CoverHole | null;
 }
 
 interface Place {
@@ -129,6 +130,7 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   const keys = new Set<string>();
   const input: DriveInput = { throttle: 0, steer: 0, brake: false, raise: false, lower: false, dig: false, dump: false };
   let waterAt = 0;
+  let sculptIdle = 0;
   let eHeld = 0;
   let eFired = false;
   const director = new Director(viewer, {
@@ -151,24 +153,24 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       });
     });
   };
-  const groundAt = (lon: number, lat: number): number => {
-    for (const place of places) {
-      const patch = place.ground;
+  const reliefAt = (lon: number, lat: number): number | null => {
+    const patches = places.flatMap((place) => [place.ground, place.context].filter((patch): patch is Patch => Boolean(patch)));
+    for (const patch of patches) {
       const scale = metersPerDegree(patch.south);
       const east = (lon - patch.west) * scale.lon;
       const north = (lat - patch.south) * scale.lat;
       if (east >= 0 && north >= 0 && east <= patch.widthM && north <= patch.heightM) return patch.field.sample(east, north);
     }
-    for (const place of places) {
-      const patch = place.context;
-      if (!patch) continue;
+    for (const patch of patches) {
       const scale = metersPerDegree(patch.south);
       const east = (lon - patch.west) * scale.lon;
       const north = (lat - patch.south) * scale.lat;
-      if (east >= 0 && north >= 0 && east <= patch.widthM && north <= patch.heightM) return patch.field.sample(east, north);
+      const eased = feathered(patch.field, east, north);
+      if (eased != null) return eased;
     }
-    return 0;
+    return null;
   };
+  const groundAt = (lon: number, lat: number): number => reliefAt(lon, lat) ?? 0;
   const rigGeo = (place: Place, rig: Rig) => {
     const pose = place.yard.pose(rig);
     const at = offsetDegrees(place.ground.south, place.ground.west, pose.east, pose.north);
@@ -253,6 +255,7 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     status.textContent = 'Measured surface restored. Banked soil is back in the ground.';
   });
   root.querySelector('#open-credits')?.addEventListener('click', () => root.querySelector<HTMLDialogElement>('#credits')?.showModal());
+  root.querySelector('#open-settings')?.addEventListener('click', () => root.querySelector<HTMLDialogElement>('#settings')?.showModal());
   root.querySelectorAll('[data-close]').forEach((button) => {
     button.addEventListener('click', () => button.closest('dialog')?.close());
   });
@@ -294,10 +297,15 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     if (ev.key === '3') chooseView('vehicle');
     if (ev.key === '4') chooseView('sky');
     if (ev.key === 'Escape') {
-      document.exitPointerLock?.();
-      if (director.view === 'vehicle') leave();
+      if (document.pointerLockElement) return;
+      const open = root.querySelector('dialog[open]');
+      if (open instanceof HTMLDialogElement) {
+        open.close();
+        return;
+      }
+      root.querySelector<HTMLDialogElement>('#settings')?.showModal();
     }
-  });
+  }, true);
   window.addEventListener('keyup', (ev) => keys.delete(ev.key.toLowerCase()));
 
   function chooseView(next: ViewId) {
@@ -315,7 +323,8 @@ export async function startWorld(root: HTMLElement): Promise<void> {
   let last = performance.now();
   const loop = () => {
     const now = performance.now();
-    const dt = Math.min(0.05, (now - last) / 1000);
+    const elapsed = Math.min(1, (now - last) / 1000);
+    const dt = Math.min(0.05, elapsed);
     last = now;
     readInput();
     if (keys.has('e')) {
@@ -342,6 +351,8 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     }
     const driving = director.view === 'vehicle' && active && focus.yard.rigs.includes(active) ? active : null;
     if (driving) focus.yard.step(dt, driving, input);
+    const working = Boolean(driving) && (input.lower || input.raise || input.dig || input.dump || Math.abs(input.throttle) > 0.2);
+    sculptIdle = working ? 0 : sculptIdle + dt;
     input.raise = false;
     input.lower = false;
     if (driving) {
@@ -350,10 +361,12 @@ export async function startWorld(root: HTMLElement): Promise<void> {
       director.anchor.lat = geo.lat;
       director.anchor.heading = geo.heading;
     }
-    director.step(dt, groundAt, driving ? rigGeo(focus, driving) : null);
-    if (focus.ground.field.dirtyChunks.size) {
-      if (now - waterAt > 1800) {
+    director.step(elapsed, groundAt, driving ? rigGeo(focus, driving) : null);
+    const dirty = focus.ground.field.dirtyChunks.size + (focus.context?.field.dirtyChunks.size ?? 0);
+    if (dirty) {
+      if (sculptIdle > 2.5 && now - waterAt > 4000) {
         settleWater(focus);
+        focus.ground.layer?.setDepth(focus.ground.depth);
         waterAt = now;
       }
       refresh(focus);
@@ -370,10 +383,12 @@ export async function startWorld(root: HTMLElement): Promise<void> {
         east: offsetDegrees(place.ground.south, place.ground.west, place.ground.widthM, 0).lon,
         north: offsetDegrees(place.ground.south, place.ground.west, 0, place.ground.heightM).lat,
       })),
-      focus.yard.rigs.map((rig) => {
-        const geo = rigGeo(focus, rig);
+      places.flatMap((place) => place.yard.rigs.map((rig) => {
+        const geo = rigGeo(place, rig);
         return { lon: geo.lon, lat: geo.lat };
-      }),
+      })),
+      reliefAt,
+      Math.round(focus.ground.field.cutM3),
     );
     requestAnimationFrame(loop);
   };
@@ -399,6 +414,20 @@ export async function startWorld(root: HTMLElement): Promise<void> {
     setView: (id: ViewId) => chooseView(id),
     view: () => director.view,
     held: () => [...keys],
+    seat: () => {
+      const rig = active ?? focus.yard.rigs[0];
+      if (!rig) return null;
+      const pose = focus.yard.pose(rig);
+      return {
+        up: pose.up,
+        ground: focus.ground.field.sample(pose.east, pose.north),
+        east: pose.east,
+        north: pose.north,
+        view: director.view,
+        cam: viewer.camera.positionCartographic.height,
+        shot: director.report(),
+      };
+    },
   };
 
   function readInput() {
@@ -466,49 +495,24 @@ function mirror(place: Place): void {
 }
 
 function mount(viewer: Cesium.Viewer, patch: Patch): void {
-  patch.layer = new ChunkLayer(viewer, patch.field, patch.west, patch.south, patch.depth);
+  patch.layer = new ChunkLayer(viewer, patch.field, patch.west, patch.south, patch.depth, patch.hole);
 }
 
 function refresh(place: Place): void {
-  place.ground.layer?.setDepth(place.ground.depth);
-  place.ground.layer?.flush(4);
-  place.context?.layer?.flush(2);
+  place.ground.layer?.flush();
+  place.context?.layer?.flush();
 }
 
 function poseModels(drawn: { place: Place; rig: Rig; model: Cesium.Model }[]): void {
   for (const { place, rig, model } of drawn) {
     const pose = place.yard.pose(rig);
-    const origin = Cesium.Cartesian3.fromDegrees(place.ground.west, place.ground.south, 0);
-    const enu = Cesium.Transforms.eastNorthUpToFixedFrame(origin);
-    const rotation = Cesium.Quaternion.fromHeadingPitchRoll(new Cesium.HeadingPitchRoll(pose.heading, 0, 0));
-    const local = Cesium.Matrix4.fromTranslationQuaternionRotationScale(
-      new Cesium.Cartesian3(pose.east, pose.north, pose.up - 0.6),
-      rotation,
-      new Cesium.Cartesian3(8, 8, 8),
-    );
-    Cesium.Matrix4.multiply(enu, local, model.modelMatrix);
+    const ground = place.ground.field.sample(pose.east, pose.north);
+    const altitude = Math.max(ground + 0.05, Math.min(ground + 3.2, pose.up - 0.9));
+    const at = offsetDegrees(place.ground.south, place.ground.west, pose.east, pose.north);
+    const position = Cesium.Cartesian3.fromDegrees(at.lon, at.lat, altitude);
+    const rotation = Cesium.Transforms.headingPitchRollQuaternion(position, new Cesium.HeadingPitchRoll(pose.heading, 0, 0));
+    model.modelMatrix = Cesium.Matrix4.fromTranslationQuaternionRotationScale(position, rotation, new Cesium.Cartesian3(4.2, 4.2, 4.2));
   }
-}
-
-function follow(viewer: Cesium.Viewer, place: Place, rig: Rig): void {
-  const pose = place.yard.pose(rig);
-  const back = 28;
-  const eye = offsetDegrees(
-    place.ground.south,
-    place.ground.west,
-    pose.east - Math.sin(pose.heading) * back,
-    pose.north - Math.cos(pose.heading) * back,
-  );
-  const look = offsetDegrees(place.ground.south, place.ground.west, pose.east, pose.north);
-  viewer.camera.setView({
-    destination: Cesium.Cartesian3.fromDegrees(eye.lon, eye.lat, pose.up + 12),
-    orientation: {
-      heading: pose.heading,
-      pitch: Cesium.Math.toRadians(-28),
-      roll: 0,
-    },
-  });
-  void look;
 }
 
 async function loadBasin(base: string): Promise<Place> {
@@ -526,13 +530,14 @@ async function loadBasin(base: string): Promise<Place> {
   yard.spawn('dozer', widthM * 0.42, widthM * 0.48);
   yard.spawn('excavator', widthM * 0.42 + 45, widthM * 0.48 + 20);
   yard.spawn('hauler', widthM * 0.42 + 16, widthM * 0.48 - 40);
+  yard.rest();
   return {
     id: 'polar-desert-basin',
     name: 'Polar Desert Basin',
     note: 'Northern Canada. The measured 4 km surface. Cut soil is pushed ahead, or held in a bucket until you dump it.',
     anchorLat: meta.center_wgs84.lat,
     anchorLon: meta.center_wgs84.lon,
-    ground: { field, west: sw.lon, south: sw.lat, widthM, heightM: widthM, depth: new Float32Array(heights.length), layer: null },
+    ground: { field, west: sw.lon, south: sw.lat, widthM, heightM: widthM, depth: new Float32Array(heights.length), layer: null, hole: null },
     context: null,
     yard,
   };
@@ -585,13 +590,14 @@ async function loadRing(base: string): Promise<Place> {
   yard.spawn('dozer', coreW * 0.5, coreW * 0.55);
   yard.spawn('excavator', coreW * 0.5 + 45, coreW * 0.55 + 16);
   yard.spawn('hauler', coreW * 0.5 + 12, coreW * 0.55 - 40);
+  yard.rest();
   return {
     id: 'rene-levasseur',
     name: 'Île René-Levasseur',
     note: 'Measured research terrain in the Nitassinan of the Innu of Pessamit. The ring is an emblem of the O, not a claim on the land. Machines here are a simulation.',
     anchorLat: anchor.lat,
     anchorLon: anchor.lon,
-    ground: { field, west: sw.lon, south: sw.lat, widthM: coreW, heightM: coreW, depth: new Float32Array(coreHeights.length), layer: null },
+    ground: { field, west: sw.lon, south: sw.lat, widthM: coreW, heightM: coreW, depth: new Float32Array(coreHeights.length), layer: null, hole: null },
     context: {
       field: context,
       west: bounds.west,
@@ -600,6 +606,12 @@ async function loadRing(base: string): Promise<Place> {
       heightM,
       depth: contextDepth,
       layer: null,
+      hole: {
+        east: (sw.lon - bounds.west) * metersPerDegree(bounds.south).lon,
+        north: (sw.lat - bounds.south) * metersPerDegree(bounds.south).lat,
+        width: coreW,
+        height: coreW,
+      },
     },
     yard,
   };
@@ -635,6 +647,10 @@ function markup(): string {
       </div>
       <div class="place"><strong id="drive-read">World</strong><div class="muted" id="drive-volumes"></div></div>
       <button id="drive-enter" class="text-btn" type="button" style="width:auto">Drive</button>
+      <button id="open-settings" class="text-btn" type="button" style="width:auto" aria-label="Settings">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.4v1.8M8 12.8v1.8M1.4 8h1.8M12.8 8h1.8M3.2 3.2l1.3 1.3M11.5 11.5l1.3 1.3M12.8 3.2l-1.3 1.3M4.5 11.5l-1.3 1.3" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+        Settings
+      </button>
       <button id="open-credits" class="text-btn" type="button" style="width:auto">Credits</button>
     </header>
     <aside class="rail">
@@ -669,6 +685,19 @@ function markup(): string {
       </div>
     </aside>
     <canvas id="minimap" class="minimap" width="168" height="168"></canvas>
+    <dialog id="settings">
+      <button class="close" data-close type="button">Close</button>
+      <h2>Settings</h2>
+      <p>One world. Changing view keeps you on the same spot. Esc opens this menu. Hold E to enter or leave a machine.</p>
+      <div class="views" role="group" aria-label="View">
+        <button type="button" data-view="orbit">Orbit <i>1</i></button>
+        <button type="button" data-view="titan">Titan <i>2</i></button>
+        <button type="button" data-view="vehicle">Vehicle <i>3</i></button>
+        <button type="button" data-view="sky">Sky <i>4</i></button>
+      </div>
+      <h3>Hands</h3>
+      <p>Titan and Sky use WASD and the mouse. Shift lengthens a Titan stride. In a machine, R raises the blade and F or the wheel lowers it. G digs, T dumps, Space brakes.</p>
+    </dialog>
     <dialog id="credits">
       <button class="close" data-close type="button">Close</button>
       <h2>Credits</h2>

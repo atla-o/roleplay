@@ -215,7 +215,7 @@ export function planeBlade(field: Field, east: number, north: number, heading: n
   for (const i of under) {
     const h = field.heights[i] ?? 0;
     if (h <= edgeY + 0.02) continue;
-    const dh = Math.min(h - edgeY, 0.45);
+    const dh = Math.min(h - edgeY, 0.12);
     field.heights[i] = h - dh;
     field.channel[i] = 1;
     field.mark(i);

@@ -42,13 +42,13 @@ export class Director {
   private arc = 0;
   private from: Shot = { lon: -89.5, lat: 75.4, height: 2000, heading: 0, pitch: -0.4, fov: 55 };
   private applied: Shot = { ...this.from };
-  private camE = 0;
+  private camE = -10;
   private camN = 0;
-  private camU = 8;
+  private camU = 4.2;
   private velE = 0;
   private velN = 0;
   private velU = 0;
-  private yawLag = 0;
+  private snap = true;
 
   constructor(private readonly viewer: Cesium.Viewer, public anchor: Anchor) {
     this.viewer.scene.screenSpaceCameraController.enableInputs = false;
@@ -76,6 +76,10 @@ export class Director {
     if (this.view === 'orbit') this.orbitRange = Math.max(400, Math.min(2_000_000, this.orbitRange * (delta > 0 ? 1.08 : 0.92)));
   }
 
+  report(): { blend: number; shot: number; from: number } {
+    return { blend: this.blend, shot: this.applied.height, from: this.from.height };
+  }
+
   setView(next: ViewId, arc = 0): void {
     if (next === this.view && this.blend >= 1 && arc === 0) return;
     this.from = { ...this.applied };
@@ -84,6 +88,7 @@ export class Director {
     this.blendDur = arc > 0 ? 1.15 : 0.8;
     this.arc = arc;
     if (next !== 'vehicle') this.orbitYaw = 0;
+    if (next === 'vehicle') this.snap = true;
   }
 
   /** Move the giant or the sky camera across the same ground. Returns false if the slope is too steep. */
@@ -127,6 +132,10 @@ export class Director {
     } else {
       this.applied = target;
     }
+    if (this.view === 'vehicle') {
+      const floor = groundAt(this.applied.lon, this.applied.lat) + 2.4;
+      if (this.applied.height < floor) this.applied.height = floor;
+    }
     this.apply(this.applied);
   }
 
@@ -150,37 +159,72 @@ export class Director {
   }
 
   private chase(ground: number, vehicle: VehiclePose | null, groundAt: (lon: number, lat: number) => number): Shot {
-    const pose = vehicle ?? { lon: this.anchor.lon, lat: this.anchor.lat, up: ground + 2, heading: this.anchor.heading, speed: 0 };
+    const pose = vehicle ?? { lon: this.anchor.lon, lat: this.anchor.lat, up: ground + 1.6, heading: this.anchor.heading, speed: 0 };
+    const floor = groundAt(pose.lon, pose.lat);
+    const base = Math.max(floor + 1.15, Math.min(floor + 3.2, pose.up));
     const yaw = pose.heading + this.orbitYaw;
-    const back = 10;
-    const above = 3.5 + this.orbitPitch * 2;
+    const back = 12;
+    const above = 4 + Math.max(-1.2, Math.min(1.5, this.orbitPitch));
     const wantE = -Math.sin(yaw) * back;
     const wantN = -Math.cos(yaw) * back;
-    const wantU = above;
-    this.camE = damp(this.camE, wantE, this.velE, 0.28, 1 / 60, (v) => { this.velE = v; });
-    this.camN = damp(this.camN, wantN, this.velN, 0.28, 1 / 60, (v) => { this.velN = v; });
-    this.camU = damp(this.camU, wantU, this.velU, 0.28, 1 / 60, (v) => { this.velU = v; });
-    this.yawLag = lerpAngle(this.yawLag, yaw, 1 - Math.exp(-(1 / 60) / 0.3));
-    let camE = this.camE;
-    let camN = this.camN;
-    let camU = this.camU;
-    const clearance = this.pullIn(pose, camE, camN, camU, groundAt);
-    camE *= clearance;
-    camN *= clearance;
-    camU = pose.up + 1.2 + camU * clearance;
+    if (this.snap) {
+      this.camE = wantE;
+      this.camN = wantN;
+      this.camU = above;
+      this.velE = 0;
+      this.velN = 0;
+      this.velU = 0;
+      this.snap = false;
+    } else {
+      this.camE = damp(this.camE, wantE, this.velE, 0.28, 1 / 60, (v) => { this.velE = v; });
+      this.camN = damp(this.camN, wantN, this.velN, 0.28, 1 / 60, (v) => { this.velN = v; });
+      this.camU = damp(this.camU, above, this.velU, 0.28, 1 / 60, (v) => { this.velU = v; });
+    }
+    const lookE = Math.sin(pose.heading) * 3;
+    const lookN = Math.cos(pose.heading) * 3;
+    const lookU = base + 1.1;
+    const pulled = this.pullIn(pose, lookE, lookN, lookU, this.camE, this.camN, base + this.camU, groundAt);
+    let camE = lookE + (this.camE - lookE) * pulled;
+    let camN = lookN + (this.camN - lookN) * pulled;
+    const span = Math.hypot(camE, camN);
+    if (span < 8) {
+      const lift = 8 / Math.max(0.2, span);
+      camE *= lift;
+      camN *= lift;
+    }
+    let camU = lookU + (base + this.camU - lookU) * pulled;
     const at = offsetDegrees(pose.lat, pose.lon, camE, camN);
+    const camGround = groundAt(at.lon, at.lat);
+    const height = Math.max(camGround + 2.4, camU);
+    const dE = lookE - camE;
+    const dN = lookN - camN;
+    const dU = lookU - height;
+    const heading = Math.atan2(dE, dN);
+    const pitch = Math.atan2(dU, Math.hypot(dE, dN));
     const fov = 60 + 10 * Math.max(0, Math.min(1, Math.abs(pose.speed) / 36));
-    return { lon: at.lon, lat: at.lat, height: Math.max(groundAt(at.lon, at.lat) + 2, camU), heading: this.yawLag, pitch: -0.22 + this.orbitPitch * 0.15, fov };
+    return { lon: at.lon, lat: at.lat, height, heading, pitch, fov };
   }
 
-  private pullIn(pose: VehiclePose, camE: number, camN: number, camU: number, groundAt: (lon: number, lat: number) => number): number {
+  /** Fraction of the boom that stays above the heightfield. 1 means the full 11 m arm is clear. */
+  private pullIn(
+    pose: VehiclePose,
+    lookE: number,
+    lookN: number,
+    lookU: number,
+    camE: number,
+    camN: number,
+    camU: number,
+    groundAt: (lon: number, lat: number) => number,
+  ): number {
     let limit = 1;
-    for (let s = 1; s <= 6; s++) {
-      const t = s / 6;
-      const at = offsetDegrees(pose.lat, pose.lon, camE * t, camN * t);
+    for (let s = 1; s <= 8; s++) {
+      const t = s / 8;
+      const e = lookE + (camE - lookE) * t;
+      const n = lookN + (camN - lookN) * t;
+      const at = offsetDegrees(pose.lat, pose.lon, e, n);
       const ground = groundAt(at.lon, at.lat);
-      const line = pose.up + 1.3 + (camU - pose.up - 1.3) * t;
-      if (line < ground + 1.8) limit = Math.min(limit, Math.max(0.18, t * 0.82));
+      const line = lookU + (camU - lookU) * t;
+      if (line < ground + 0.45) limit = Math.min(limit, Math.max(0.45, (s - 1) / 8));
     }
     return limit;
   }
@@ -195,36 +239,87 @@ export class Director {
   }
 }
 
+const mapCache = new WeakMap<HTMLCanvasElement, { key: string; canvas: HTMLCanvasElement }>();
+
+/** Top-down height shading of the ground under the player, plus the site rectangle and the machines. */
 export function drawMinimap(
   canvas: HTMLCanvasElement,
   anchor: Anchor,
   sites: { name: string; west: number; south: number; east: number; north: number }[],
   vehicles: { lon: number; lat: number }[],
+  sample: (lon: number, lat: number) => number | null,
+  revision: number,
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const w = canvas.width;
   const h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = 'rgba(16, 18, 20, 0.82)';
-  ctx.fillRect(0, 0, w, h);
+  const range = 3200;
   const scale = metersPerDegree(anchor.lat);
-  const range = 6000;
+  const key = `${revision}:${Math.round(anchor.lon * 500)}:${Math.round(anchor.lat * 500)}`;
+  let cached = mapCache.get(canvas);
+  if (!cached || cached.key !== key) {
+    const shade = document.createElement('canvas');
+    shade.width = w;
+    shade.height = h;
+    const g = shade.getContext('2d');
+    if (g) {
+      const image = g.createImageData(w, h);
+      const mid = sample(anchor.lon, anchor.lat) ?? 200;
+      const step = 4;
+      for (let y = 0; y < h; y += step) {
+        const lat = anchor.lat + ((h / 2 - y) / (h / 2)) * (range / scale.lat);
+        const latN = anchor.lat + ((h / 2 - (y + step)) / (h / 2)) * (range / scale.lat);
+        for (let x = 0; x < w; x += step) {
+          const lon = anchor.lon + ((x - w / 2) / (w / 2)) * (range / scale.lon);
+          const lonE = anchor.lon + ((x + step - w / 2) / (w / 2)) * (range / scale.lon);
+          const height = sample(lon, lat);
+          let r = 42;
+          let gv = 52;
+          let b = 56;
+          if (height != null) {
+            const east = sample(lonE, lat);
+            const north = sample(lon, latN);
+            const slope = (east ?? height) - height + ((north ?? height) - height);
+            const light = Math.max(-18, Math.min(22, -slope * 1.4));
+            const t = Math.max(0, Math.min(1, (height - (mid - 40)) / 110));
+            r = Math.max(0, Math.min(255, 92 + t * 120 + light));
+            gv = Math.max(0, Math.min(255, 78 + t * 96 + light));
+            b = Math.max(0, Math.min(255, 58 + t * 62 + light * 0.6));
+          }
+          for (let dy = 0; dy < step && y + dy < h; dy++) {
+            for (let dx = 0; dx < step && x + dx < w; dx++) {
+              const o = ((y + dy) * w + (x + dx)) * 4;
+              image.data[o] = r;
+              image.data[o + 1] = gv;
+              image.data[o + 2] = b;
+              image.data[o + 3] = 255;
+            }
+          }
+        }
+      }
+      g.putImageData(image, 0, 0);
+    }
+    cached = { key, canvas: shade };
+    mapCache.set(canvas, cached);
+  }
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(cached.canvas, 0, 0);
   const project = (lon: number, lat: number) => ({
     x: w / 2 + ((lon - anchor.lon) * scale.lon / range) * (w / 2),
     y: h / 2 - ((lat - anchor.lat) * scale.lat / range) * (h / 2),
   });
-  ctx.strokeStyle = 'rgba(215, 219, 224, 0.7)';
+  ctx.strokeStyle = 'rgba(244, 247, 248, 0.9)';
   ctx.lineWidth = 1;
   for (const site of sites) {
     const a = project(site.west, site.south);
     const b = project(site.east, site.north);
-    ctx.strokeRect(a.x, b.y, b.x - a.x, a.y - b.y);
+    ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
   }
-  ctx.fillStyle = '#d7dbe0';
+  ctx.fillStyle = '#f0d78c';
   for (const vehicle of vehicles) {
     const p = project(vehicle.lon, vehicle.lat);
-    if (p.x < 0 || p.y < 0 || p.x > w || p.y > h) continue;
+    if (p.x < 2 || p.y < 2 || p.x > w - 2 || p.y > h - 2) continue;
     ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
   }
   ctx.save();

@@ -1,0 +1,46 @@
+{
+  "sites": [
+    {
+      "id": "polar-desert-basin",
+      "name": "Polar Desert Basin",
+      "heights": "basin.f32",
+      "color": "basin_color.jpg",
+      "cols": 2000,
+      "rows": 2000,
+      "spacing": 2.0,
+      "hmin": 66.6015625,
+      "hmax": 279.484375,
+      "repose": 35.0,
+      "spawn": [
+        2720.0,
+        2700.0
+      ],
+      "water": null,
+      "outer_m": 144.0,
+      "forest": false,
+      "lat": 75.3971,
+      "lon": -89.5091
+    },
+    {
+      "id": "rene-levasseur",
+      "name": "\u00cele Ren\u00e9-Levasseur",
+      "heights": "ile.f32",
+      "color": "ile_color.jpg",
+      "cols": 2000,
+      "rows": 2000,
+      "spacing": 2.0,
+      "hmin": 348.2874755859375,
+      "hmax": 616.302490234375,
+      "repose": 32.0,
+      "spawn": [
+        1999.0,
+        1999.0
+      ],
+      "water": 348.59,
+      "outer_m": 348.0,
+      "forest": true,
+      "lat": 51.4332,
+      "lon": -69.0892
+    }
+  ]
+}

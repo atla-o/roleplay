@@ -1,5 +1,30 @@
 # Roleplay
 
+The playable build is the Godot 4.7 project in `godot/`. Desktop play uses the Forward+ renderer. The web preview uses the Compatibility renderer so it can load on GitHub Pages. The earlier Cesium and Three.js viewers are still in this repository.
+
+## Play the Godot world
+
+Controls are the same on Linux and in the browser.
+
+- **Robot.** W throttle, S brake into reverse, A and D steer. Q raises the blade, E lowers it. Hold the left mouse button to lower the blade and the right button to raise it. The mouse, or the right stick, orbits the chase camera. It recenters after about a second and a half.
+- **Human.** Eye line of a 1.8 m person, camera behind them. WASD walks, Shift runs, Space jumps.
+- **Titan.** The same walk at 48 times the size.
+- **Menu.** One button, bottom left. It switches body and place: Polar Desert Basin or Île René-Levasseur. Esc closes it. `?capture=1` on the web build, or `--capture`, hides that button.
+- **Gamepad.** Left stick drives, triggers throttle and reverse, bumpers move the blade, right stick looks, bottom face button jumps.
+
+```bash
+# Godot 4.7.2, from the project folder
+godot --path godot
+```
+
+`godot --headless --path godot -s res://tests/conservation.gd` checks that a blade cut keeps the volume: cut equals fill, and the sum of the heights does not change.
+
+Export presets are Linux x86_64, Linux arm64 (both Forward+), and Web (Compatibility, no threads). The pull-request workflow exports them. Linux binaries are workflow artifacts. The web build is the preview.
+
+The frame rate is printed to the console every two seconds (`fps N`). On this agent's software OpenGL it was about 2 fps. That number is not a measurement of an M2 MacBook.
+
+## Earlier viewer
+
 Roleplay is the Creation division's world map and measured terrain. The map is a CesiumJS globe (Apache-2.0) split into Tier 1 cold squares, north first: Northern Canada, the United States including North Dakota, Northern Europe, Russia, and Antarctica, plus the Côte-Nord square. Two squares open measured ground. Polar Desert Basin is the 4 × 4 km Arctic surface: ArcticDEM and NHN, cold-method drainage, the ninety-day window, and a 1.7 m walk. Île René-Levasseur is the island in the Manicouagan ring reservoir. On the globe the ring reads as an O. That square is research terrain, not land to reshape: mass movers stay off it, and the crew there is a survey.
 
 At globe scale the player is a giant. Swarm orders move mass movers, then the bio builder and weather manipulator, then structure builders, across a selected square. Cut and fill on that view are conserved sim parameters. They do not rewrite the measured basin.

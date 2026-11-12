@@ -1,12 +1,7 @@
-# Live playable preview for every pull request.
-# Deploys dist/ to the gh-pages branch at pr-preview/pr-<number>/.
-# The site URL is https://atla-o.github.io/roleplay/pr-preview/pr-<number>/
-#
-# This needs two repository settings only an admin can turn on:
-# 1. Settings → Pages → Build and deployment → Source: Deploy from a branch,
-#    Branch: gh-pages, Folder: / (root).
-# 2. Settings → Actions → General → Workflow permissions →
-#    Read and write permissions.
+# Playable Godot preview for this branch.
+# Deploys the web export to gh-pages at pr-preview/pr-<number>/.
+# Native Linux builds are uploaded as workflow artifacts.
+
 name: Deploy PR previews
 
 on:
@@ -25,27 +20,71 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  GODOT_VERSION: 4.7.2
+
 jobs:
   deploy-preview:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        if: github.event.action != 'closed'
-        uses: actions/setup-node@v4
+      - name: Cache Godot
+        uses: actions/cache@v4
         with:
-          node-version: 22
-          cache: npm
+          path: |
+            /opt/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-templates
 
-      - name: Install and build
-        if: github.event.action != 'closed'
-        run: npm ci && npm run build
+      - name: Install Godot
+        run: |
+          set -euo pipefail
+          if [ ! -x /opt/godot/godot ]; then
+            mkdir -p /opt/godot
+            curl -fsSL -o /tmp/godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+            unzip -o /tmp/godot.zip -d /opt/godot
+            mv "/opt/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" /opt/godot/godot
+            chmod +x /opt/godot/godot
+          fi
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          if [ ! -f "$TEMPLATE_DIR/web_release.zip" ]; then
+            mkdir -p "$TEMPLATE_DIR"
+            curl -fsSL -o /tmp/templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+            rm -rf /tmp/godot-templates
+            unzip -q /tmp/templates.tpz -d /tmp/godot-templates
+            cp -a /tmp/godot-templates/templates/. "$TEMPLATE_DIR/"
+          fi
 
-      - name: Keep GitHub Pages from dropping Cesium files
-        if: github.event.action != 'closed'
-        run: touch dist/.nojekyll
+      - name: Conservation test
+        run: /opt/godot/godot --headless --path godot -s res://tests/conservation.gd
+
+      - name: Export web preview
+        run: |
+          rm -rf dist
+          mkdir -p dist
+          /opt/godot/godot --headless --path godot --export-release "Web" ../dist/index.html
+          touch dist/.nojekyll
+
+      - name: Export Linux x86_64
+        run: |
+          mkdir -p build
+          /opt/godot/godot --headless --path godot --export-release "Linux x86_64" ../build/roleplay.x86_64
+
+      - name: Export Linux arm64
+        run: |
+          /opt/godot/godot --headless --path godot --export-release "Linux arm64" ../build/roleplay.arm64
+
+      - name: Upload Linux builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: roleplay-linux
+          path: |
+            build/roleplay.x86_64
+            build/roleplay.arm64
+          if-no-files-found: error
 
       - name: Deploy preview
         id: preview
@@ -59,3 +98,18 @@ jobs:
       - name: Preview URL
         if: steps.preview.outputs.deployment-action == 'deploy'
         run: echo "Playable preview ${{ steps.preview.outputs.preview-url }}"
+
+  remove-preview:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Remove preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: dist
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          action: remove

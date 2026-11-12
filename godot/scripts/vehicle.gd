@@ -182,7 +182,7 @@ func _load_model() -> void:
 	tilt_node = model.find_child("blade-angle", true, false) as Node3D
 	_collect_tracks(model)
 	_glass(model)
-	_dress()
+	_seat_on_ground(model)
 	print("tracks ", track_mats.size(), " tilt ", tilt_node != null)
 
 
@@ -306,6 +306,27 @@ func _blade_point(u: float, t: float, width: float) -> Vector3:
 	z -= end * 0.22
 	z += sin(u * PI) * 0.08
 	return Vector3(x, y, z)
+
+
+func _seat_on_ground(root: Node3D) -> void:
+	var min_y := 1.0e8
+	var found := false
+	var stack: Array = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+			var mi := node as MeshInstance3D
+			var ab := mi.get_aabb()
+			var to_root := root.global_transform.affine_inverse() * mi.global_transform
+			for corner in 8:
+				var p: Vector3 = to_root * ab.get_endpoint(corner)
+				min_y = minf(min_y, p.y)
+				found = true
+		for child in node.get_children():
+			stack.append(child)
+	if found:
+		root.position.y -= min_y
+		print("dozer seated, was ", min_y)
 
 
 func _find_player(node: Node) -> AnimationPlayer:

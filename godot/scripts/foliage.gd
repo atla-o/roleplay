@@ -2,6 +2,7 @@ class_name Foliage
 extends Node3D
 
 var pines: Array = []
+var birches: Array = []
 var grasses: Array = []
 var bushes: Array = []
 var boulders: Array = []
@@ -10,6 +11,10 @@ func _ready() -> void:
 	for path in ["res://assets/models/pine_a.glb", "res://assets/models/pine_b.glb"]:
 		for mesh in _meshes(path):
 			pines.append(_trim_trunk(mesh))
+	for path in ["res://assets/models/birch_1.glb", "res://assets/models/birch_2.glb", "res://assets/models/birch_4.glb"]:
+		var baked := _baked_tree(path)
+		if baked != null:
+			birches.append(baked)
 	grasses = _meshes("res://assets/models/grass_short.glb") + _meshes("res://assets/models/grass_tall.glb")
 	bushes = _meshes("res://assets/models/bush.glb")
 	boulders = _meshes("res://assets/models/boulder.glb")
@@ -80,12 +85,12 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 					hh -= 0.22
 					if d2 < 170.0 and near.size() + birch_near.size() < 1200:
 						if birch_stand and jx > 0.42:
-							birch_near.append(_xf(ex, hh, nz, yaw, sc))
+							birch_near.append(_xf(ex, hh, nz, yaw, sc * 2.4))
 						else:
 							near.append(_xf(ex, hh, nz, yaw, sc))
 					elif d2 < 1400.0 and far.size() + birch_far.size() < 7000:
 						if birch_stand and jx > 0.42:
-							birch_far.append(_xf(ex, hh, nz, yaw, sc * 1.2))
+							birch_far.append(_xf(ex, hh, nz, yaw, sc * 2.6))
 						else:
 							far.append(_xf(ex, hh, nz, yaw, sc * 1.2))
 			if dist < 120.0 and slope < 0.4:
@@ -102,19 +107,18 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 		var p: Vector2 = spawn + spot
 		var bh := terrain.sample(p.x, p.y)
 		if bh > water + 1.5:
-			birch_near.append(_xf(p.x, bh - 0.05, p.y, 0.4, 1.25))
+			birch_near.append(_xf(p.x, bh - 0.05, p.y, 0.4, 2.5))
 	var litter: Array[Vector2] = [Vector2(-4.0, 6.0), Vector2(-10.0, 9.0), Vector2(2.0, 8.0), Vector2(-7.0, 14.0)]
 	for spot2 in litter:
 		var q: Vector2 = spawn + spot2
 		var qh := terrain.sample(q.x, q.y)
 		shrub.append(_xf(q.x, qh, q.y, 1.2, 0.85))
 		logs.append(_log_xf(q.x + 1.4, qh + 0.1, q.y + 0.6, 0.7))
-	var birch_mesh := _birch_mesh()
 	for mesh in pines:
 		_spawn(mesh, near, true, 0.0, 230.0)
-	_spawn(birch_mesh, birch_near, true, 0.0, 230.0)
+	_spawn_variants(birches, birch_near, true, 0.0, 230.0)
 	_spawn(_impostor(), far, false, 160.0, 1700.0)
-	_spawn(_birch_impostor(), birch_far, false, 160.0, 1700.0)
+	_spawn_variants(birches, birch_far, false, 160.0, 1700.0)
 	for mesh in grasses:
 		_spawn(mesh, grass, false, 0.0, 90.0)
 	for mesh in bushes:
@@ -185,6 +189,62 @@ func _slope(terrain: TerrainWorld, x: float, z: float) -> float:
 	var hx := terrain.sample(x + 4.0, z) - h
 	var hz := terrain.sample(x, z + 4.0) - h
 	return clampf(Vector2(hx, hz).length() / 4.0, 0.0, 1.0)
+
+
+func _baked_tree(path: String) -> ArrayMesh:
+	var packed := load(path) as PackedScene
+	if packed == null:
+		return null
+	var root := packed.instantiate()
+	var mi := _first_mesh(root)
+	if mi == null or mi.mesh == null:
+		root.free()
+		return null
+	var src := mi.mesh
+	var xf := mi.transform
+	var out := ArrayMesh.new()
+	for s in src.get_surface_count():
+		var arrays: Array = src.surface_get_arrays(s)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var norms: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		for i in verts.size():
+			verts[i] = xf * verts[i]
+		if not norms.is_empty():
+			var basis := xf.basis
+			for i in norms.size():
+				norms[i] = (basis * norms[i]).normalized()
+			arrays[Mesh.ARRAY_NORMAL] = norms
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var mat := src.surface_get_material(s)
+		if mat is BaseMaterial3D:
+			mat = mat.duplicate()
+			(mat as BaseMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+		out.surface_set_material(out.get_surface_count() - 1, mat)
+	root.free()
+	return out
+
+
+func _first_mesh(node: Node) -> MeshInstance3D:
+	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+		return node
+	for child in node.get_children():
+		var found := _first_mesh(child)
+		if found:
+			return found
+	return null
+
+
+func _spawn_variants(meshes: Array, items: Array[Transform3D], shadows: bool, begin: float, end: float) -> void:
+	if meshes.is_empty() or items.is_empty():
+		return
+	var buckets: Array = []
+	for _m in meshes:
+		buckets.append([] as Array[Transform3D])
+	for i in items.size():
+		(buckets[i % meshes.size()] as Array[Transform3D]).append(items[i])
+	for i in meshes.size():
+		_spawn(meshes[i], buckets[i], shadows, begin, end)
 
 
 func _meshes(path: String) -> Array:

@@ -243,7 +243,7 @@ func _place(body: Node3D, x: float, z: float, yaw_v: float) -> void:
 	var fwd := Vector3(sin(yaw_v), 0.0, cos(yaw_v))
 	fwd = (fwd - n * fwd.dot(n)).normalized()
 	var r := n.cross(fwd).normalized()
-	var lift := 0.55 if body is TrackedVehicle else 0.05
+	var lift := 0.02 if body is TrackedVehicle else 0.02
 	body.global_transform = Transform3D(Basis(r, n, fwd), Vector3(x, y + lift, z))
 	body.set("yaw", yaw_v)
 	if body is RigidBody3D:
@@ -456,7 +456,7 @@ func _basin_machine(dig: bool) -> void:
 		walk_to = 8.0
 	while walked < walk_to:
 		var shoulder := vehicle.global_position + right * 5.2
-		var edge := terrain.sample(shoulder.x, shoulder.z) - 0.3
+		var edge := terrain.sample(shoulder.x, shoulder.z) - 0.28
 		var at := vehicle.global_position + fwd * 3.15
 		terrain.cut_blade(at.x, at.z, fwd.x, fwd.z, 3.6, edge, float(terrain.spec["repose"]))
 		terrain.stamp_tracks(vehicle.global_position.x, vehicle.global_position.z, fwd.x, fwd.z)

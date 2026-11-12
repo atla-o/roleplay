@@ -40,7 +40,7 @@ static func plane_blade(field: Field, east: float, north: float, fx: float, fz: 
 		var h: float = field.heights[i]
 		if h <= edge_y + 0.015:
 			continue
-		var dh: float = minf(h - edge_y, 0.4)
+		var dh: float = minf(h - edge_y, 0.35)
 		field.heights[i] = h - dh
 		field.mark(i)
 		moved += dh * area

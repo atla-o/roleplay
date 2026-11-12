@@ -7,6 +7,7 @@ var steer := 0.0
 var blade_angle := 0.28
 var blade_tilt := 0.0
 var tilt_node: Node3D
+var blade_node: Node3D
 var travel := 0.0
 var track_travel := 0.0
 var model: Node3D
@@ -158,6 +159,11 @@ func _pose_blade() -> void:
 		blade_anim.play("blade-close")
 	blade_anim.seek(t * clip.length, true)
 	blade_anim.pause()
+	if blade_node:
+		var dig := clampf(inverse_lerp(-0.08, -0.65, blade_angle), 0.0, 1.0)
+		var rot := blade_node.rotation
+		rot.x += dig * 0.1
+		blade_node.rotation = rot
 	if tilt_node:
 		tilt_node.rotation.z = blade_tilt
 
@@ -172,8 +178,11 @@ func _load_model() -> void:
 	model = (load("res://assets/models/bulldozer.glb") as PackedScene).instantiate()
 	add_child(model)
 	blade_anim = _find_player(model)
+	blade_node = model.find_child("blade", true, false) as Node3D
 	tilt_node = model.find_child("blade-angle", true, false) as Node3D
 	_collect_tracks(model)
+	_glass(model)
+	_dress()
 	print("tracks ", track_mats.size(), " tilt ", tilt_node != null)
 
 
@@ -201,6 +210,91 @@ func _collect_tracks(node: Node) -> void:
 				track_mats.append(mat)
 	for child in node.get_children():
 		_collect_tracks(child)
+
+
+func _glass(node: Node) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		var mat := mi.get_active_material(0)
+		if mat is StandardMaterial3D:
+			var c := (mat as StandardMaterial3D).albedo_color
+			if c.b > c.r + 0.05 and c.g > 0.65 and c.r > 0.5:
+				var glass := (mat as StandardMaterial3D).duplicate() as StandardMaterial3D
+				glass.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				glass.albedo_color = Color(0.55, 0.72, 0.78, 0.38)
+				glass.roughness = 0.04
+				glass.metallic = 0.05
+				mi.set_surface_override_material(0, glass)
+	for child in node.get_children():
+		_glass(child)
+
+
+func _dress() -> void:
+	# Stack on the hood, rams out to the blade, cleats on the tracks, tines at the rear.
+	_add_cylinder(model, 0.055, 0.62, Vector3(0.38, 2.42, -0.62), Color(0.12, 0.12, 0.13))
+	_add_cylinder(model, 0.09, 0.08, Vector3(0.38, 2.72, -0.62), Color(0.2, 0.2, 0.22))
+	if blade_node:
+		_ram(blade_node, Vector3(0.55, 0.35, 0.15), Vector3(0.72, 0.02, 2.05))
+		_ram(blade_node, Vector3(-0.55, 0.35, 0.15), Vector3(-0.72, 0.02, 2.05))
+	for z in [-1.45, -0.95, -0.45, 0.05, 0.55, 1.05, 1.5]:
+		for side in [-1.05, 1.05]:
+			var cleat := _box(Vector3(0.08, 0.06, 0.16), Color(0.16, 0.16, 0.17))
+			cleat.position = Vector3(side, 0.22, z)
+			model.add_child(cleat)
+	for x in [-0.55, 0.0, 0.55]:
+		var tine := _box(Vector3(0.08, 0.28, 0.55), Color(0.1, 0.1, 0.11))
+		tine.position = Vector3(x, 0.42, -2.15)
+		tine.rotation.x = -0.5
+		model.add_child(tine)
+
+
+func _ram(parent: Node3D, a: Vector3, b: Vector3) -> void:
+	var length := a.distance_to(b)
+	var mi := _cylinder_mesh(0.04, length, Color(0.72, 0.74, 0.76))
+	var dir := (b - a).normalized()
+	var x_axis := dir.cross(Vector3.FORWARD)
+	if x_axis.length() < 0.001:
+		x_axis = dir.cross(Vector3.RIGHT)
+	x_axis = x_axis.normalized()
+	var z_axis := x_axis.cross(dir).normalized()
+	mi.transform = Transform3D(Basis(x_axis, dir, z_axis), (a + b) * 0.5)
+	parent.add_child(mi)
+
+
+func _add_cylinder(parent: Node3D, radius: float, height: float, at: Vector3, color: Color) -> void:
+	var mi := _cylinder_mesh(radius, height, color)
+	mi.position = at
+	parent.add_child(mi)
+
+
+func _cylinder_mesh(radius: float, height: float, color: Color) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	mesh.height = height
+	mesh.radial_segments = 8
+	mi.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.metallic = 0.65
+	mat.roughness = 0.38
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	return mi
+
+
+func _box(size: Vector3, color: Color) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	mi.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.metallic = 0.45
+	mat.roughness = 0.5
+	mi.material_override = mat
+	return mi
 
 
 func _make_dust() -> void:

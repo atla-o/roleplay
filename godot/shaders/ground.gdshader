@@ -21,6 +21,7 @@ uniform float water_y = -1000.0;
 uniform vec2 patch_origin = vec2(0.0, 0.0);
 uniform float patch_size = 64.0;
 uniform float patch_live = 0.0;
+uniform float is_fine = 0.0;
 
 varying vec3 world_pos;
 varying vec3 world_normal;
@@ -63,6 +64,12 @@ void vertex() {
 }
 
 void fragment() {
+	if (is_fine < 0.5 && patch_live > 0.5) {
+		vec2 puv = (world_pos.xz - patch_origin) / max(patch_size, 0.001);
+		if (puv.x > 0.0 && puv.y > 0.0 && puv.x < 1.0 && puv.y < 1.0) {
+			discard;
+		}
+	}
 	vec2 uv_raw = vec2(UV.x, 1.0 - UV.y);
 	bool in_photo = uv_raw.x > 0.0 && uv_raw.x < 1.0 && uv_raw.y > 0.0 && uv_raw.y < 1.0;
 	vec2 uv = clamp(uv_raw, vec2(0.001), vec2(0.999));
@@ -99,8 +106,11 @@ void fragment() {
 	}
 	float wet = 0.0;
 	if (water_y > -100.0) {
-		wet = 1.0 - smoothstep(0.0, 0.7, world_pos.y - water_y);
-		alb = mix(alb, alb * vec3(0.55, 0.62, 0.58), wet * 0.65);
+		float above = world_pos.y - water_y;
+		wet = (1.0 - smoothstep(0.0, 2.8, above)) * (1.0 - smoothstep(0.02, 0.45, slope));
+		vec3 wet_sand = shore * vec3(0.55, 0.5, 0.42);
+		wet_sand = mix(wet_sand, wet_sand * vec3(0.42, 0.48, 0.46), clamp(1.0 - above, 0.0, 1.0));
+		alb = mix(alb, wet_sand, wet * 0.92);
 	}
 
 	float cut = texture(disturb_map, uv).r;
@@ -117,8 +127,8 @@ void fragment() {
 	alb = mix(alb, spoil, smoothstep(0.25, 0.9, cut) * 0.72);
 	alb = mix(alb, alb * vec3(0.62, 0.58, 0.5), tracks * 0.7);
 	ALBEDO = alb;
-	ROUGHNESS = mix(0.94, 1.0, max(cut, tracks));
-	SPECULAR = 0.02;
+	ROUGHNESS = mix(mix(0.94, 1.0, max(cut, tracks)), 0.32, wet);
+	SPECULAR = mix(0.02, 0.18, wet);
 	METALLIC = 0.0;
 
 	vec3 n = nrm;

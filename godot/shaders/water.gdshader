@@ -1,13 +1,14 @@
 shader_type spatial;
-render_mode cull_back, diffuse_burley, specular_schlick_ggx;
+render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
 
 uniform sampler2D height_map : filter_linear, repeat_disable;
-uniform sampler2D wave_nrm : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
-uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear;
 uniform vec2 height_range = vec2(0.0, 1.0);
 uniform float water_y = 0.0;
 uniform vec2 tile_m = vec2(4000.0, 4000.0);
 uniform vec2 tile_origin = vec2(0.0, 0.0);
+uniform float use_ssr = 0.0;
+uniform vec3 sun_dir = vec3(0.45, 0.42, 0.78);
 
 varying vec3 world_pos;
 
@@ -23,34 +24,58 @@ void vertex() {
 
 void fragment() {
 	vec2 uv = vec2((world_pos.x - tile_origin.x) / tile_m.x, 1.0 - (world_pos.z - tile_origin.y) / tile_m.y);
-	float depth = 18.0;
+	float depth = 16.0;
 	bool in_tile = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
+	float open_water = 0.0;
 	if (in_tile) {
-		depth = water_y - decode_h(uv);
-		if (depth < -0.25) {
+		float h_c = decode_h(uv);
+		depth = water_y - h_c;
+		if (depth < -0.18) {
 			discard;
 		}
+		// The reservoir is stored as a flat sheet on the waterline, so a
+		// near-zero depth on flat ground is open lake, not a puddle.
+		float rise = max(abs(decode_h(uv + vec2(0.004, 0.0)) - h_c), abs(decode_h(uv + vec2(0.0, 0.004)) - h_c));
+	float flatness = 1.0 - smoothstep(0.2, 1.5, rise);
+	float near_line = 1.0 - smoothstep(0.15, 2.4, abs(depth));
+	open_water = flatness * near_line;
 	}
-	float shore = smoothstep(0.0, 4.5, depth);
-	vec2 w1 = world_pos.xz * 0.18 + vec2(TIME * 0.04, TIME * 0.015);
-	vec2 w2 = world_pos.xz * 0.31 + vec2(-TIME * 0.02, TIME * 0.03);
-	vec3 wn = texture(wave_nrm, w1).rgb * 2.0 - 1.0;
-	wn += texture(wave_nrm, w2).rgb * 2.0 - 1.0;
-	wn = normalize(vec3(wn.x, 1.4, wn.y));
-	vec3 shallow = vec3(0.55, 0.66, 0.48);
-	vec3 deep = vec3(0.04, 0.12, 0.16);
-	vec3 water = mix(shallow, deep, smoothstep(0.2, 0.85, shore));
-	vec3 up_view = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
-	float fres = pow(1.0 - clamp(dot(normalize(VIEW), up_view), 0.0, 1.0), 3.0);
-	vec2 ref_uv = vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y) + wn.xz * 0.025;
-	vec3 mirror = texture(screen_tex, clamp(ref_uv, vec2(0.001), vec2(0.999))).rgb;
-	vec3 sky = vec3(0.55, 0.64, 0.72);
-	vec3 refl = mix(sky, mirror, 0.55);
-	ALBEDO = mix(water, refl, fres * 0.72);
-	float foam = (1.0 - smoothstep(0.0, 0.55, depth)) * (0.55 + 0.45 * sin(world_pos.x * 1.7 + world_pos.z * 1.3 + TIME * 1.4));
-	ALBEDO = mix(ALBEDO, vec3(0.82, 0.86, 0.82), clamp(foam, 0.0, 1.0) * 0.85);
-	ROUGHNESS = mix(0.08, 0.28, 1.0 - fres);
-	SPECULAR = 0.7;
+	float shown = mix(max(depth, 0.05), 14.0, open_water);
+
+	float w1 = sin(world_pos.x * 0.42 + world_pos.z * 0.17 + TIME * 0.7);
+	float w2 = sin(world_pos.x * -0.21 + world_pos.z * 0.38 + TIME * 0.45);
+	float w3 = sin((world_pos.x + world_pos.z) * 0.15 - TIME * 0.3);
+	vec3 wn = normalize(vec3(-(w1 * 0.7 + w3) * 0.045, 1.0, -(w2 * 0.7 - w3) * 0.045));
+
+	vec3 shallow = vec3(0.20, 0.55, 0.58);
+	vec3 deep = vec3(0.015, 0.09, 0.18);
+	vec3 water = mix(shallow, deep, smoothstep(0.25, 5.0, shown));
+
+	vec3 view_w = normalize(CAMERA_POSITION_WORLD - world_pos);
+	vec3 refl = reflect(-view_w, wn);
+	float sky_h = clamp(refl.y * 1.15 + 0.05, 0.0, 1.0);
+	vec3 sky = mix(vec3(0.62, 0.72, 0.78), vec3(0.18, 0.42, 0.72), sky_h);
+	vec3 sun = normalize(sun_dir);
+	float glint = pow(clamp(dot(refl, sun), 0.0, 1.0), 96.0);
+	sky += vec3(1.0, 0.96, 0.86) * glint * 0.9;
+	if (use_ssr > 0.5) {
+		vec2 ref_uv = SCREEN_UV + wn.xz * 0.04;
+		float toward_sky = step(SCREEN_UV.y, ref_uv.y);
+		vec3 mirror = texture(screen_tex, clamp(ref_uv, vec2(0.002), vec2(0.998))).rgb;
+		sky = mix(sky, mirror, 0.5 * toward_sky);
+	}
+	float fres = pow(1.0 - clamp(dot(view_w, wn), 0.0, 1.0), 3.2);
+	vec3 color = mix(water, sky, fres * 0.82 + 0.08);
+
+	float shore = 1.0 - smoothstep(0.05, 0.85, shown);
+	shore *= 1.0 - open_water;
+	float lace = 0.55 + 0.45 * sin(world_pos.x * 2.4 + world_pos.z * 1.7 + TIME * 1.2);
+	color = mix(color, vec3(0.86, 0.91, 0.9), shore * lace);
+
+	ALBEDO = color;
+	ROUGHNESS = mix(0.04, 0.22, 1.0 - fres);
+	SPECULAR = 0.85;
 	METALLIC = 0.0;
+	ALPHA = mix(mix(0.42, 0.94, smoothstep(0.15, 2.2, shown)), 1.0, open_water);
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 }

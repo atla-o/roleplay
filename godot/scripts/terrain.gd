@@ -6,6 +6,7 @@ const CHUNK := 32
 var field: Soil.Field
 var spec: Dictionary = {}
 var mat: ShaderMaterial
+var fine_mat: ShaderMaterial
 var height_img: Image
 var height_tex: ImageTexture
 var disturb_img: Image
@@ -168,6 +169,9 @@ func _bind_ground(span: float) -> void:
 		water_y = float(spec["water"])
 	mat.set_shader_parameter("water_y", water_y)
 	_sync_patch_uniforms()
+	fine_mat = mat.duplicate() as ShaderMaterial
+	fine_mat.set_shader_parameter("is_fine", 1.0)
+	fine_mesh.material_override = fine_mat
 
 
 func _sync_patch_uniforms() -> void:
@@ -176,6 +180,10 @@ func _sync_patch_uniforms() -> void:
 	mat.set_shader_parameter("patch_origin", patch.origin)
 	mat.set_shader_parameter("patch_size", patch.size_m())
 	mat.set_shader_parameter("patch_live", 1.0 if patch.live else 0.0)
+	if fine_mat:
+		fine_mat.set_shader_parameter("patch_origin", patch.origin)
+		fine_mat.set_shader_parameter("patch_size", patch.size_m())
+		fine_mat.set_shader_parameter("patch_live", 1.0 if patch.live else 0.0)
 
 
 func _flush_fine() -> void:
@@ -259,16 +267,10 @@ func _rebuild_fine() -> void:
 	fine_mesh.mesh = mesh
 
 
-func _under_patch(c: int, r: int) -> bool:
-	if patch == null or not patch.live:
-		return false
-	var x := float(c) * field.spacing
-	var z := float(r) * field.spacing
-	var inset := 2.0
-	var lx := x - patch.origin.x
-	var lz := z - patch.origin.y
-	var size := patch.size_m()
-	return lx > inset and lz > inset and lx < size - inset and lz < size - inset
+func _under_patch(_c: int, _r: int) -> bool:
+	# The coarse mesh stays continuous. The ground shader drops fragments that
+	# the 0.25 m patch already covers, so the two meshes never share a pixel.
+	return false
 
 
 func _punch_coarse() -> void:
@@ -440,7 +442,7 @@ func _build_water() -> void:
 	var span := float(field.cols - 1) * field.spacing
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var y := float(spec["water"]) + 0.35
+	var y := float(spec["water"]) + 0.12
 	# Wide enough that the horizon is water from the island's high ground.
 	var reach := 90000.0
 	var pts := [
@@ -468,7 +470,8 @@ func _build_water() -> void:
 	wmat.set_shader_parameter("water_y", y)
 	wmat.set_shader_parameter("tile_m", Vector2(span, span))
 	wmat.set_shader_parameter("tile_origin", Vector2.ZERO)
-	wmat.set_shader_parameter("wave_nrm", load("res://assets/textures/brown_mud_nor_gl.jpg"))
+	wmat.set_shader_parameter("use_ssr", 1.0 if RenderingServer.get_current_rendering_method() == "forward_plus" else 0.0)
+	wmat.set_shader_parameter("sun_dir", Vector3(0.55, 0.38, 0.74))
 	water.material_override = wmat
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(water)
@@ -570,11 +573,11 @@ func _inside_patch(center: Vector3) -> bool:
 
 func _lod_for(center: Vector3) -> int:
 	var dist := Vector2(center.x - focus.x, center.z - focus.z).length()
-	if dist < 240.0:
+	if dist < 560.0:
 		return 1
-	if dist < 720.0:
+	if dist < 1200.0:
 		return 2
-	if dist < 1600.0:
+	if dist < 2200.0:
 		return 4
 	return 8
 
@@ -593,8 +596,11 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 	var r1 := mini(field.rows - 1, r0 + CHUNK)
 	if c1 <= c0 or r1 <= r0:
 		return
-	var cs := _steps(c0, c1, stride)
-	var rs := _steps(r0, r1, stride)
+	# Overlap the next chunk by one step so a LOD crack cannot open onto the sky.
+	var c1_mesh := mini(field.cols - 1, c1 + stride)
+	var r1_mesh := mini(field.rows - 1, r1 + stride)
+	var cs := _steps(c0, c1_mesh, stride)
+	var rs := _steps(r0, r1_mesh, stride)
 	var positions := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
@@ -611,12 +617,6 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 		lookup[id] = idx
 		var px := float(c) * spacing
 		var pz := float(r) * spacing
-		var maxx := float(c1) * spacing
-		var maxz := float(r1) * spacing
-		if absf(px - maxx) < 0.01:
-			px += 0.06
-		if absf(pz - maxz) < 0.01:
-			pz += 0.06
 		positions.append(Vector3(px, field.height_at(c, r) + drop, pz))
 		uvs.append(Vector2(float(c) / cols_f, float(r) / rows_f))
 		var step_n := 2
@@ -633,18 +633,14 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 		for i in range(cs.size() - 1):
 			if _under_patch(cs[i], rs[j]) and _under_patch(cs[i + 1], rs[j]) and _under_patch(cs[i], rs[j + 1]) and _under_patch(cs[i + 1], rs[j + 1]):
 				continue
-			var a: int = add.call(cs[i], rs[j], 0.0)
-			var b: int = add.call(cs[i + 1], rs[j], 0.0)
-			var d: int = add.call(cs[i], rs[j + 1], 0.0)
-			var e: int = add.call(cs[i + 1], rs[j + 1], 0.0)
-			indices.append_array(PackedInt32Array([a, b, d, b, e, d]))
-	if _needs_skirt(key, Vector2i(0, -1)):
+			_quad(add, indices, cs[i], rs[j], cs[i + 1], rs[j + 1])
+	if _map_edge(key, Vector2i(0, -1)):
 		_skirt(add, indices, cs, r0, true)
-	if _needs_skirt(key, Vector2i(0, 1)):
+	if _map_edge(key, Vector2i(0, 1)):
 		_skirt(add, indices, cs, r1, true)
-	if _needs_skirt(key, Vector2i(-1, 0)):
+	if _map_edge(key, Vector2i(-1, 0)):
 		_skirt(add, indices, rs, c0, false)
-	if _needs_skirt(key, Vector2i(1, 0)):
+	if _map_edge(key, Vector2i(1, 0)):
 		_skirt(add, indices, rs, c1, false)
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
@@ -676,13 +672,66 @@ func _steps(a: int, b: int, stride: int) -> PackedInt32Array:
 	return out
 
 
-func _needs_skirt(key: Vector2i, dir: Vector2i) -> bool:
+func _map_edge(key: Vector2i, dir: Vector2i) -> bool:
 	var nkey := key + dir
 	var max_x := int((field.cols - 1) / CHUNK)
 	var max_y := int((field.rows - 1) / CHUNK)
-	if nkey.x < 0 or nkey.y < 0 or nkey.x > max_x or nkey.y > max_y:
-		return true
-	return _lod_for(_chunk_center(nkey)) > _lod_for(_chunk_center(key))
+	return nkey.x < 0 or nkey.y < 0 or nkey.x > max_x or nkey.y > max_y
+
+
+func _neighbor_step(key: Vector2i, dir: Vector2i, stride: int) -> int:
+	if _map_edge(key, dir):
+		return stride
+	return maxi(stride, _lod_for(_chunk_center(key + dir)))
+
+
+func _quad(add: Callable, indices: PackedInt32Array, c0: int, r0: int, c1: int, r1: int) -> void:
+	var a: int = add.call(c0, r0, 0.0)
+	var b: int = add.call(c1, r0, 0.0)
+	var d: int = add.call(c0, r1, 0.0)
+	var e: int = add.call(c1, r1, 0.0)
+	indices.append_array(PackedInt32Array([a, b, d, b, e, d]))
+
+
+func _zip_rows(add: Callable, indices: PackedInt32Array, low_c: PackedInt32Array, low_r: int, high_c: PackedInt32Array, high_r: int) -> void:
+	var i := 0
+	var j := 0
+	var na := low_c.size()
+	var nb := high_c.size()
+	if na < 2 or nb < 2:
+		return
+	while i < na - 1 or j < nb - 1:
+		var take_low := i < na - 1 and (j >= nb - 1 or low_c[i + 1] <= high_c[j + 1])
+		if take_low:
+			_quad_corner(add, indices, low_c[i], low_r, low_c[i + 1], low_r, high_c[j], high_r)
+			i += 1
+		else:
+			_quad_corner(add, indices, low_c[i], low_r, high_c[j + 1], high_r, high_c[j], high_r)
+			j += 1
+
+
+func _zip_cols(add: Callable, indices: PackedInt32Array, left_c: int, left_r: PackedInt32Array, right_c: int, right_r: PackedInt32Array) -> void:
+	var i := 0
+	var j := 0
+	var na := left_r.size()
+	var nb := right_r.size()
+	if na < 2 or nb < 2:
+		return
+	while i < na - 1 or j < nb - 1:
+		var take_left := i < na - 1 and (j >= nb - 1 or left_r[i + 1] <= right_r[j + 1])
+		if take_left:
+			_quad_corner(add, indices, left_c, left_r[i], right_c, right_r[j], left_c, left_r[i + 1])
+			i += 1
+		else:
+			_quad_corner(add, indices, right_c, right_r[j], right_c, right_r[j + 1], left_c, left_r[i])
+			j += 1
+
+
+func _quad_corner(add: Callable, indices: PackedInt32Array, c0: int, r0: int, c1: int, r1: int, c2: int, r2: int) -> void:
+	var a: int = add.call(c0, r0, 0.0)
+	var b: int = add.call(c1, r1, 0.0)
+	var d: int = add.call(c2, r2, 0.0)
+	indices.append_array(PackedInt32Array([a, b, d]))
 
 
 func _skirt(add: Callable, indices: PackedInt32Array, line: PackedInt32Array, fixed: int, horizontal: bool) -> void:

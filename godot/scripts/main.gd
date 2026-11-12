@@ -180,7 +180,7 @@ func _world() -> void:
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	var fill := DirectionalLight3D.new()
 	fill.rotation_degrees = Vector3(-24.0, -150.0, 0.0)
-	fill.light_energy = 0.22
+	fill.light_energy = 0.46
 	fill.shadow_enabled = false
 	add_child(fill)
 	sun.shadow_enabled = true
@@ -490,17 +490,20 @@ func _stand_on_shore() -> void:
 		aim = Vector3(0.0, 0.0, 1.0)
 	aim = aim.normalized()
 	camera.hold = true
-	camera.camera.global_position = human.global_position - aim * 8.0 + Vector3.UP * 3.8
-	camera.camera.look_at(human.global_position + aim * 18.0 + Vector3.UP * 0.4, Vector3.UP)
+	camera.camera.global_position = human.global_position - aim * 5.5 + Vector3.UP * 5.2
+	camera.camera.look_at(human.global_position + aim * 48.0 + Vector3.UP * 0.15, Vector3.UP)
 	print("shore ", human.global_position, " look ", look, " water ", water, " low ", low)
 
 
-func _frame_trench(fwd: Vector3, back: float) -> void:
+func _frame_trench(fwd: Vector3, along: float) -> void:
+	# Camera sits in front of the blade and off to one side, so the yellow
+	# blade is the near end and the trench runs away behind the tracks.
 	var side := Vector3(fwd.z, 0.0, -fwd.x)
-	var trench := vehicle.global_position + fwd * back
+	var focus := vehicle.global_position + fwd * 1.8
+	var trail := clampf(-along, 0.0, 8.0)
 	camera.hold = true
-	camera.camera.global_position = trench - fwd * 3.2 + side * 8.0 + Vector3.UP * 3.6
-	camera.camera.look_at(trench + Vector3.UP * 0.15, Vector3.UP)
+	camera.camera.global_position = focus + fwd * (8.5 + trail * 0.2) + side * (11.5 + trail * 0.15) + Vector3.UP * (4.0 + trail * 0.08)
+	camera.camera.look_at(vehicle.global_position + fwd * 2.2 + Vector3.UP * 0.85, Vector3.UP)
 	for _i in 2:
 		await get_tree().process_frame
 

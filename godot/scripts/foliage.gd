@@ -29,7 +29,9 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 	var shrub: Array[Transform3D] = []
 	var rocks: Array[Transform3D] = []
 	var logs: Array[Transform3D] = []
-	var step := 6
+	var birch_near: Array[Transform3D] = []
+	var birch_far: Array[Transform3D] = []
+	var step := 10
 	for y in range(0, img.get_height(), step):
 		for x in range(0, img.get_width(), step):
 			var px := img.get_pixel(x, y)
@@ -41,29 +43,58 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 			var roll := _hash(x, y)
 			var green := px.g > px.r + 0.025 and px.g > 0.08
 			var dist := Vector2(east, north).distance_to(spawn)
-			if dist < 10.0:
-				continue
 			var slope := _slope(terrain, east, north)
-			if roll > 0.35 and rocks.size() < 900 and (slope > 0.08 or not forest):
+			if dist > 12.0 and roll > 0.35 and rocks.size() < 900 and (slope > 0.08 or not forest):
 				var rs := 0.8 + _hash(x + 4, y) * (3.2 if slope > 0.3 else 1.6)
 				rocks.append(_xf(east, h - 0.2, north, roll * TAU, rs))
-			if not forest or not green:
+			if not forest:
 				continue
-			if roll > 0.12 and near.size() < 720 and dist < 640.0:
-				var s := 0.75 + _hash(x + 2, y + 1) * 0.7
-				near.append(_xf(east + (_hash(x, y + 3) - 0.5) * 6.0, h, north, roll * TAU, s))
-			elif far.size() < 1400:
-				var s2 := 0.9 + _hash(x + 6, y) * 0.8
-				far.append(_xf(east, h, north, roll * TAU, s2))
-			if _hash(x + 8, y + 8) > 0.38 and grass.size() < 1400:
-				grass.append(_xf(east, h, north, roll * TAU, 0.8 + roll * 0.7))
-			if _hash(x + 1, y + 9) > 0.42 and shrub.size() < 1100:
+			var excess := px.g - maxf(px.r, px.b)
+			var lum := (px.r + px.g + px.b) / 3.0
+			# Sentinel-2: dark green is closed canopy, pale or brown pixels are clearings.
+			var clearing := excess < 0.028 or lum < 0.07 or lum > 0.7 or not green
+			if clearing:
+				if _hash(x + 8, y + 8) > 0.62 and grass.size() < 700:
+					grass.append(_xf(east, h, north, roll * TAU, 0.9))
+				continue
+			var cell := span / float(img.get_width()) * float(step)
+			var gap := 6.0 if excess > 0.11 else 10.0
+			var n := maxi(int(cell / gap), 1)
+			var birch_stand := lum > 0.2 and excess < 0.1
+			for iy in n:
+				for ix in n:
+					var jx := _hash(x + ix * 3 + 1, y + iy * 2)
+					var jz := _hash(x + ix + 4, y + iy * 5 + 2)
+					var ex := east + (float(ix) + jx) * (cell / float(n))
+					var nz := north + (float(iy) + jz) * (cell / float(n))
+					var hh := terrain.sample(ex, nz)
+					if hh < water + 1.5:
+						continue
+					var d2 := Vector2(ex, nz).distance_to(spawn)
+					if d2 < 14.0:
+						continue
+					var sc := 0.7 + jz * 0.9
+					var yaw := (jx + jz) * TAU
+					if d2 < 170.0 and near.size() + birch_near.size() < 1200:
+						if birch_stand and jx > 0.42:
+							birch_near.append(_xf(ex, hh, nz, yaw, sc))
+						else:
+							near.append(_xf(ex, hh, nz, yaw, sc))
+					elif d2 < 1400.0 and far.size() + birch_far.size() < 7000:
+						if birch_stand and jx > 0.42:
+							birch_far.append(_xf(ex, hh, nz, yaw, sc * 1.2))
+						else:
+							far.append(_xf(ex, hh, nz, yaw, sc * 1.2))
+			if _hash(x + 1, y + 9) > 0.55 and shrub.size() < 900:
 				shrub.append(_xf(east, h, north, roll * 3.0, 0.7 + roll * 0.6))
-			if _hash(x + 5, y + 2) > 0.86 and logs.size() < 220:
+			if _hash(x + 5, y + 2) > 0.9 and logs.size() < 180:
 				logs.append(_log_xf(east, h + 0.18, north, roll * TAU))
+	var birch_mesh := _birch_mesh()
 	for mesh in pines:
-		_spawn(mesh, near, true, 0.0, 260.0)
-	_spawn(_impostor(), far, false, 180.0, 1400.0)
+		_spawn(mesh, near, true, 0.0, 230.0)
+	_spawn(birch_mesh, birch_near, true, 0.0, 230.0)
+	_spawn(_impostor(), far, false, 160.0, 1700.0)
+	_spawn(_birch_impostor(), birch_far, false, 160.0, 1700.0)
 	for mesh in grasses:
 		_spawn(mesh, grass, false, 0.0, 90.0)
 	for mesh in bushes:
@@ -71,7 +102,11 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 	for mesh in boulders:
 		_spawn(mesh, rocks, true, 0.0, 500.0)
 	_spawn(_log_mesh(), logs, true, 0.0, 180.0)
-	_collide(near, 0.42, 5.5)
+	var trunks: Array[Transform3D] = []
+	for xf in near:
+		if Vector2(xf.origin.x, xf.origin.z).distance_to(spawn) < 36.0 and trunks.size() < 70:
+			trunks.append(xf)
+	_collide(trunks, 0.42, 5.5)
 	_collide(rocks, 0.55, 1.1)
 
 
@@ -169,6 +204,34 @@ func _spawn(mesh: Mesh, items: Array[Transform3D], shadows: bool, begin: float, 
 		node.visibility_range_end = end
 		node.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(node)
+
+
+func _birch_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_cone(st, 0.0, 4.4, 0.1, 0.045, Color(0.86, 0.84, 0.76))
+	_cone(st, 2.4, 4.8, 0.85, 0.5, Color(0.48, 0.62, 0.3))
+	_cone(st, 3.8, 6.0, 0.5, 0.06, Color(0.58, 0.7, 0.36))
+	st.generate_normals()
+	var mesh := st.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/foliage.gdshader")
+	mesh.surface_set_material(0, mat)
+	return mesh
+
+
+func _birch_impostor() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_cone(st, 0.0, 3.2, 0.12, 0.06, Color(0.84, 0.82, 0.74))
+	_cone(st, 2.2, 5.4, 0.95, 0.35, Color(0.5, 0.64, 0.32))
+	_cone(st, 4.2, 6.4, 0.4, 0.05, Color(0.62, 0.72, 0.38))
+	st.generate_normals()
+	var mesh := st.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/foliage.gdshader")
+	mesh.surface_set_material(0, mat)
+	return mesh
 
 
 func _impostor() -> ArrayMesh:

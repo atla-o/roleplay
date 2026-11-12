@@ -563,8 +563,6 @@ func _stream(pos: Vector3) -> void:
 			if x * CHUNK >= field.cols or y * CHUNK >= field.rows:
 				continue
 			var key := Vector2i(x, y)
-			if _inside_patch(_chunk_center(key)):
-				continue
 			keep[key] = true
 			var lod := _lod_for(_chunk_center(key))
 			if built_lod.get(key, -1) != lod or dirty.has(key):

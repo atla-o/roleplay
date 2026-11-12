@@ -21,14 +21,14 @@ float decode_h(vec2 uv) {
 float bed_at(vec2 uv) {
 	// A wide filter so the 2 m height samples do not become stair-steps.
 	float h = decode_h(uv) * 4.0;
-	h += decode_h(uv + vec2(0.0024, 0.0));
-	h += decode_h(uv - vec2(0.0024, 0.0));
-	h += decode_h(uv + vec2(0.0, 0.0024));
-	h += decode_h(uv - vec2(0.0, 0.0024));
-	h += decode_h(uv + vec2(0.0017, 0.0017));
-	h += decode_h(uv + vec2(-0.0017, 0.0017));
-	h += decode_h(uv + vec2(0.0017, -0.0017));
-	h += decode_h(uv + vec2(-0.0017, -0.0017));
+	h += decode_h(uv + vec2(0.007, 0.0));
+	h += decode_h(uv - vec2(0.007, 0.0));
+	h += decode_h(uv + vec2(0.0, 0.007));
+	h += decode_h(uv - vec2(0.0, 0.007));
+	h += decode_h(uv + vec2(0.005, 0.005));
+	h += decode_h(uv + vec2(-0.005, 0.005));
+	h += decode_h(uv + vec2(0.005, -0.005));
+	h += decode_h(uv + vec2(-0.005, -0.005));
 	return h / 12.0;
 }
 
@@ -72,8 +72,8 @@ void fragment() {
 	float w3 = sin((world_pos.x + world_pos.z) * 0.03 - TIME * 0.2);
 	vec3 wn = normalize(vec3(-(w1 * 0.6 + w3) * 0.02, 1.0, -(w2 * 0.6 - w3) * 0.02));
 
-	vec3 shallow = vec3(0.28, 0.62, 0.66);
-	vec3 deep = vec3(0.08, 0.28, 0.48);
+	vec3 shallow = vec3(0.12, 0.38, 0.46);
+	vec3 deep = vec3(0.05, 0.22, 0.4);
 	vec3 water = mix(shallow, deep, smoothstep(0.2, 4.0, shown));
 
 	vec3 view_w = normalize(CAMERA_POSITION_WORLD - world_pos);
@@ -82,9 +82,9 @@ void fragment() {
 	vec3 sky = mix(vec3(0.62, 0.72, 0.78), vec3(0.18, 0.42, 0.72), sky_h);
 	vec3 sun = normalize(sun_dir);
 	float ndot = clamp(dot(refl, sun), 0.0, 1.0);
-	float core = pow(ndot, 280.0);
-	float spark = hash21(floor(world_pos.xz * 1.6 + vec2(TIME * 0.35, 0.0)));
-	float glint = core * step(0.55, spark);
+	float core = pow(ndot, 900.0);
+	float spark = hash21(floor(world_pos.xz * 4.0));
+	float glint = core * step(0.93, spark);
 	if (use_ssr > 0.5) {
 		vec2 ref_uv = SCREEN_UV + wn.xz * 0.04;
 		float toward_sky = step(SCREEN_UV.y, ref_uv.y);
@@ -92,19 +92,18 @@ void fragment() {
 		sky = mix(sky, mirror, 0.25 * toward_sky);
 	}
 	float fres = pow(1.0 - clamp(dot(view_w, wn), 0.0, 1.0), 3.2);
-	vec3 color = mix(water, sky, fres * 0.62 + 0.14);
-	color += vec3(1.0, 0.98, 0.92) * glint * 0.42;
+	vec3 color = mix(water, sky, fres * 0.55 + 0.12);
 
 	float shore = smoothstep(-0.05, 0.28, depth) * (1.0 - smoothstep(0.2, 1.8, shown));
 	shore *= 1.0 - open_water;
 	float lap = 0.5 + 0.5 * sin(world_pos.x * 0.18 + world_pos.z * 0.13 + TIME * 0.7);
 	color = mix(color, vec3(0.82, 0.9, 0.88), shore * (0.28 + 0.45 * lap));
 
-	ALBEDO = color * 0.5;
-	EMISSION = color * 0.55;
+	ALBEDO = color * 0.55;
+	EMISSION = color * 0.35 + vec3(1.0, 0.98, 0.92) * glint * 0.18;
 	ROUGHNESS = mix(0.04, 0.22, 1.0 - fres);
 	SPECULAR = 0.85;
 	METALLIC = 0.0;
-	ALPHA = mix(smoothstep(-0.35, 0.7, depth), 1.0, open_water);
+	ALPHA = mix(0.9, 1.0, smoothstep(0.1, 1.4, max(depth, 0.0)));
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 }

@@ -13,7 +13,7 @@ var current := ""
 
 func _ready() -> void:
 	collision_layer = 2
-	collision_mask = 1
+	collision_mask = 3
 	var shape := CollisionShape3D.new()
 	var cap := CapsuleShape3D.new()
 	cap.height = 1.75
@@ -61,6 +61,7 @@ func _physics_process(dt: float) -> void:
 	var r := n.cross(f).normalized()
 	global_transform.basis = Basis(r, n, f)
 	move_and_slide()
+	_plant_feet()
 	var ground := terrain.sample(global_position.x, global_position.z)
 	if global_position.y < ground:
 		global_position.y = ground
@@ -81,6 +82,22 @@ func _physics_process(dt: float) -> void:
 	elif planar > 0.15:
 		clip = "Walk"
 	_play(clip)
+
+
+func _plant_feet() -> void:
+	if model == null or terrain == null:
+		return
+	var x := global_position.x
+	var z := global_position.z
+	var hx := terrain.sample(x + 0.32, z) - terrain.sample(x - 0.32, z)
+	var hz := terrain.sample(x, z + 0.32) - terrain.sample(x, z - 0.32)
+	var ground_n := Vector3(-hx, 0.64, -hz).normalized()
+	var f := forward()
+	f = (f - ground_n * f.dot(ground_n)).normalized()
+	if f.length() < 0.2:
+		return
+	var r := ground_n.cross(f).normalized()
+	model.transform = Transform3D(Basis(r, ground_n, f), Vector3(0.0, -0.02, 0.0))
 
 
 func _play(clip: String) -> void:

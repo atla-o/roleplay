@@ -50,27 +50,37 @@ void fragment() {
 	// Macro blotches, tens of metres across. Not the fine ripple that was an alias.
 	float macro = texture(gravel_alb, world_pos.xz * 0.018).g;
 
-	vec3 gravel = triplanar_color(gravel_alb, world_pos, nrm, 0.22);
-	vec3 rock = triplanar_color(rock_alb, world_pos, nrm, 0.16);
-	vec3 floor_t = triplanar_color(forest_alb, world_pos, nrm, 0.2);
+	float jitter = texture(gravel_alb, world_pos.xz * 0.031 + vec2(3.1, 1.7)).r;
+	vec3 gravel_a = triplanar_color(gravel_alb, world_pos, nrm, 0.17);
+	vec3 gravel_b = triplanar_color(gravel_alb, world_pos.zyx + vec3(9.0, 0.0, 4.0), nrm, 0.13);
+	vec3 gravel = mix(gravel_a, gravel_b, jitter);
+	vec3 rock_a = triplanar_color(rock_alb, world_pos, nrm, 0.045);
+	vec3 rock_b = triplanar_color(rock_alb, vec3(world_pos.z, world_pos.y, -world_pos.x), nrm, 0.034);
+	vec3 rock = mix(rock_a, rock_b, 0.45 + jitter * 0.3);
+	vec3 floor_a = triplanar_color(forest_alb, world_pos, nrm, 0.16);
+	vec3 floor_b = triplanar_color(forest_alb, vec3(world_pos.z, world_pos.y, -world_pos.x) + vec3(6.0, 0.0, 2.0), nrm, 0.11);
+	vec3 floor_t = mix(floor_a, floor_b, jitter);
 	vec3 leaves = triplanar_color(leaves_alb, world_pos, nrm, 0.24);
 	vec3 shore = triplanar_color(shore_alb, world_pos, nrm, 0.28);
 
-	vec3 detail = mix(gravel, rock, clamp(slope * 1.6 + (1.0 - sat_l) * 0.35, 0.0, 1.0));
-	vec3 alb = sat * (0.55 + 0.8 * detail);
+	// Flats are frost-shattered gravel. The coursed rock texture stays on slopes,
+	// where a banded albedo does not read as furrows across the plain.
+	vec3 detail = mix(gravel, rock, smoothstep(0.08, 0.42, slope));
+	detail = mix(detail, gravel, jitter * 0.25);
+	vec3 alb = mix(detail, sat, 0.18);
+	alb = mix(alb, alb * vec3(0.78, 0.84, 0.9), 0.42);
+	alb = alb / (1.0 + max(alb - vec3(0.62), vec3(0.0)) * 1.6);
 	if (forest > 0.5) {
 		float canopy = clamp((sat.g - max(sat.r, sat.b)) * 4.0, 0.0, 1.0);
-		detail = mix(floor_t, leaves, clamp(macro, 0.0, 1.0));
+		detail = mix(floor_t, leaves, clamp(macro * 0.7 + jitter * 0.3, 0.0, 1.0));
 		detail = mix(detail, rock, smoothstep(0.18, 0.55, slope));
 		float shore_w = 0.0;
 		if (water_y > -100.0) {
-			shore_w = 1.0 - smoothstep(0.05, 1.6, world_pos.y - water_y);
+			shore_w = 1.0 - smoothstep(0.05, 2.4, world_pos.y - water_y);
 		}
 		detail = mix(detail, shore, shore_w * (1.0 - slope));
-		// Duff and moss under the canopy. The Sentinel green only tints it,
-		// so the island is not a single turf colour.
-		alb = mix(detail, sat, 0.22 + canopy * 0.28);
-		alb *= 0.72 + sat_l * 0.55;
+		alb = mix(detail, sat, 0.18 + canopy * 0.22);
+		alb *= 0.78 + sat_l * 0.35;
 	}
 	float wet = 0.0;
 	if (water_y > -100.0) {
@@ -90,12 +100,17 @@ void fragment() {
 	SPECULAR = 0.02;
 	METALLIC = 0.0;
 
-	vec3 gn = texture(gravel_nrm, world_pos.xz * 0.22).rgb * 2.0 - 1.0;
-	vec3 rn = texture(rock_nrm, world_pos.xz * 0.16).rgb * 2.0 - 1.0;
-	vec3 dn = mix(gn, rn, clamp(slope * 1.4, 0.0, 1.0));
-	vec3 n = normalize(nrm + vec3(dn.x, 0.0, dn.y) * mix(0.55, 0.25, slope));
+	vec2 nuv = world_pos.xz * 0.07;
+	vec3 gn = texture(gravel_nrm, nuv).rgb;
+	vec3 gn2 = texture(gravel_nrm, vec2(nuv.y, -nuv.x) * 0.8 + 0.37).rgb;
+	vec3 rn = texture(rock_nrm, nuv * 0.65).rgb;
+	vec3 base_n = forest > 0.5 ? texture(forest_nrm, nuv).rgb : mix(gn, rn, 0.65);
+	vec3 dn = (mix(base_n, gn2, 0.5) * 2.0 - 1.0);
+	float nstr = slope > 0.22 ? 0.04 : 0.0;
 	if (cut > 0.2) {
-		n = normalize(nrm + vec3(dn.x, 0.0, dn.y) * 0.12);
+		nstr = 0.03;
 	}
-	NORMAL = normalize((VIEW_MATRIX * vec4(n, 0.0)).xyz);
+	vec3 n = nrm + vec3(dn.x, 0.0, dn.y) * nstr;
+	n.y = max(n.y, 0.28);
+	NORMAL = normalize((VIEW_MATRIX * vec4(normalize(n), 0.0)).xyz);
 }

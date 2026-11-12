@@ -30,6 +30,7 @@ var ring_far: MeshInstance3D
 var ring_near: MeshInstance3D
 var ring_near_at := Vector2(-1.0e9, -1.0e9)
 var fine_mesh: MeshInstance3D
+var punched: Array = []
 var fine_img: Image
 var fine_tex: ImageTexture
 const WINDOW := 97
@@ -135,6 +136,7 @@ func ensure_patch(focus: Vector2) -> void:
 		fine_tex.update(fine_img)
 		_sync_patch_uniforms()
 		_rebuild_fine()
+		_punch_coarse()
 		collision_dirty = true
 
 
@@ -196,19 +198,27 @@ func _rebuild_fine() -> void:
 	var n := Soil.Patch.N
 	var cell := Soil.Patch.CELL
 	var positions := PackedVector3Array()
+	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
 	var indices := PackedInt32Array()
 	var span := float(field.cols - 1) * field.spacing
-	var stride := n
 	positions.resize(n * n)
+	normals.resize(n * n)
 	uvs.resize(n * n)
+	var heights := patch.field.heights
 	for r in n:
 		for c in n:
 			var x := patch.origin.x + float(c) * cell
 			var z := patch.origin.y + float(r) * cell
 			var idx := r * n + c
-			positions[idx] = Vector3(x, patch.field.heights[idx], z)
+			positions[idx] = Vector3(x, heights[idx], z)
 			uvs[idx] = Vector2(clampf(x / span, 0.0, 1.0), clampf(z / span, 0.0, 1.0))
+			var h: float = heights[idx]
+			var hl: float = heights[idx - 1] if c > 0 else h
+			var hr: float = heights[idx + 1] if c + 1 < n else h
+			var hd: float = heights[idx - n] if r > 0 else h
+			var hu: float = heights[idx + n] if r + 1 < n else h
+			normals[idx] = Vector3(hl - hr, cell * 2.0, hd - hu).normalized()
 	var quads := (n - 1) * (n - 1)
 	indices.resize(quads * 6)
 	var w := 0
@@ -228,16 +238,46 @@ func _rebuild_fine() -> void:
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = positions
+	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var tool := SurfaceTool.new()
-	tool.create_from(mesh, 0)
-	tool.generate_normals()
-	mesh = tool.commit()
 	mesh.surface_set_material(0, mat)
 	fine_mesh.mesh = mesh
+
+
+func _under_patch(c: int, r: int) -> bool:
+	if patch == null or not patch.live:
+		return false
+	var x := float(c) * field.spacing
+	var z := float(r) * field.spacing
+	var inset := 2.0
+	var lx := x - patch.origin.x
+	var lz := z - patch.origin.y
+	var size := patch.size_m()
+	return lx > inset and lz > inset and lx < size - inset and lz < size - inset
+
+
+func _punch_coarse() -> void:
+	if patch == null or not patch.live:
+		return
+	var spacing := field.spacing
+	var c0 := int(patch.origin.x / spacing / float(CHUNK))
+	var r0 := int(patch.origin.y / spacing / float(CHUNK))
+	var c1 := int((patch.origin.x + patch.size_m()) / spacing / float(CHUNK))
+	var r1 := int((patch.origin.y + patch.size_m()) / spacing / float(CHUNK))
+	var next := {}
+	for y in range(r0, r1 + 1):
+		for x in range(c0, c1 + 1):
+			next[Vector2i(x, y)] = true
+	for key in punched:
+		if not next.has(key) and chunks.has(key):
+			_build_chunk(key, _lod_for(_chunk_center(key)))
+	for key in next.keys():
+		if chunks.has(key):
+			_build_chunk(key, _lod_for(_chunk_center(key)))
+	punched = next.keys()
 
 
 func refresh_edits() -> void:
@@ -544,6 +584,7 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 	var cs := _steps(c0, c1, stride)
 	var rs := _steps(r0, r1, stride)
 	var positions := PackedVector3Array()
+	var normals := PackedVector3Array()
 	var uvs := PackedVector2Array()
 	var indices := PackedInt32Array()
 	var lookup := {}
@@ -558,23 +599,22 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 		lookup[id] = idx
 		var px := float(c) * spacing
 		var pz := float(r) * spacing
-		var minx := float(c0) * spacing
-		var maxx := float(c1) * spacing
-		var minz := float(r0) * spacing
-		var maxz := float(r1) * spacing
-		if absf(px - minx) < 0.01:
-			px -= 0.7
-		elif absf(px - maxx) < 0.01:
-			px += 0.7
-		if absf(pz - minz) < 0.01:
-			pz -= 0.7
-		elif absf(pz - maxz) < 0.01:
-			pz += 0.7
 		positions.append(Vector3(px, field.height_at(c, r) + drop, pz))
 		uvs.append(Vector2(float(c) / cols_f, float(r) / rows_f))
+		var step_n := maxi(stride, 1)
+		var hl: float = field.height_at(c - step_n, r)
+		var hr: float = field.height_at(c + step_n, r)
+		var hd: float = field.height_at(c, r - step_n)
+		var hu: float = field.height_at(c, r + step_n)
+		var nrm := Vector3(hl - hr, float(step_n) * spacing * 2.0, hd - hu).normalized()
+		if drop < 0.0:
+			nrm = Vector3(0.0, 0.35, 0.0).normalized()
+		normals.append(nrm)
 		return idx
 	for j in range(rs.size() - 1):
 		for i in range(cs.size() - 1):
+			if _under_patch(cs[i], rs[j]) and _under_patch(cs[i + 1], rs[j]) and _under_patch(cs[i], rs[j + 1]) and _under_patch(cs[i + 1], rs[j + 1]):
+				continue
 			var a: int = add.call(cs[i], rs[j], 0.0)
 			var b: int = add.call(cs[i + 1], rs[j], 0.0)
 			var d: int = add.call(cs[i], rs[j + 1], 0.0)
@@ -591,14 +631,11 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = positions
+	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = indices
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var tool := SurfaceTool.new()
-	tool.create_from(mesh, 0)
-	tool.generate_normals()
-	mesh = tool.commit()
 	mesh.surface_set_material(0, mat)
 	var node: MeshInstance3D = chunks.get(key)
 	if node == null:

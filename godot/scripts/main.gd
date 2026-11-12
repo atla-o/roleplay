@@ -13,6 +13,8 @@ var ui: Control
 var panel: PanelContainer
 var capture := false
 var shot_dir := ""
+var shot_until := ""
+var shot_from := ""
 var fps_time := 0.0
 var sun: DirectionalLight3D
 
@@ -123,33 +125,43 @@ func _world() -> void:
 	var env := Environment.new()
 	var sky := Sky.new()
 	var sky_mat := PhysicalSkyMaterial.new()
-	sky_mat.rayleigh_coefficient = 1.6
-	sky_mat.mie_coefficient = 0.008
+	sky_mat.rayleigh_coefficient = 2.4
+	sky_mat.mie_coefficient = 0.035
+	sky_mat.mie_eccentricity = 0.78
+	sky_mat.turbidity = 6.0
+	sky_mat.ground_color = Color(0.32, 0.30, 0.26)
 	sky_mat.energy_multiplier = 1.05
 	sky.sky_material = sky_mat
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.38
+	env.ambient_light_energy = 0.7
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 0.62
+	env.tonemap_exposure = 0.68
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-	env.fog_density = 0.00016
-	env.fog_aerial_perspective = 0.82
-	env.fog_light_color = Color(0.72, 0.78, 0.84)
+	env.fog_density = 0.00009
+	env.fog_aerial_perspective = 0.55
+	env.fog_light_color = Color(0.62, 0.72, 0.84)
+	env.fog_sun_scatter = 0.18
 	if RenderingServer.get_current_rendering_method() == "forward_plus":
 		env.ssao_enabled = true
-		env.ssao_radius = 2.4
-		env.ssao_intensity = 1.3
+		env.ssao_radius = 2.2
+		env.ssao_intensity = 1.6
+		env.ssil_enabled = true
+		env.sdfgi_enabled = true
+		env.sdfgi_cascades = 4
+		env.sdfgi_min_cell_size = 0.4
+		env.sdfgi_use_occlusion = true
 		env.volumetric_fog_enabled = true
-		env.volumetric_fog_density = 0.008
+		env.volumetric_fog_density = 0.004
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	add_child(world_env)
 	sun = DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-28.0, 42.0, 0.0)
-	sun.light_energy = 1.05
+	sun.rotation_degrees = Vector3(-16.0, 38.0, 0.0)
+	sun.light_energy = 1.15
+	sun.light_color = Color(1.0, 0.96, 0.88)
 	var fill := DirectionalLight3D.new()
 	fill.rotation_degrees = Vector3(-24.0, -150.0, 0.0)
 	fill.light_energy = 0.22
@@ -158,8 +170,9 @@ func _world() -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	sun.directional_shadow_max_distance = 1100.0
-	sun.shadow_bias = 0.12
-	sun.shadow_normal_bias = 2.0
+	sun.shadow_bias = 0.03
+	sun.shadow_normal_bias = 0.35
+	sun.directional_shadow_max_distance = 420.0
 	sun.directional_shadow_blend_splits = true
 	add_child(sun)
 
@@ -191,8 +204,11 @@ func _open_site(index: int) -> void:
 
 func _place(body: Node3D, x: float, z: float, yaw_v: float) -> void:
 	var y := terrain.sample(x, z)
+	var hx := terrain.sample(x + 1.4, z) - terrain.sample(x - 1.4, z)
+	var hz := terrain.sample(x, z + 1.4) - terrain.sample(x, z - 1.4)
+	var n := Vector3(-hx, 2.8, -hz).normalized()
 	var fwd := Vector3(sin(yaw_v), 0.0, cos(yaw_v))
-	var n := Vector3.UP
+	fwd = (fwd - n * fwd.dot(n)).normalized()
 	var r := n.cross(fwd).normalized()
 	var lift := 0.55 if body is TrackedVehicle else 0.05
 	body.global_transform = Transform3D(Basis(r, n, fwd), Vector3(x, y + lift, z))
@@ -315,6 +331,10 @@ func _read_args() -> void:
 		if arg.begins_with("--shots="):
 			shot_dir = arg.trim_prefix("--shots=")
 			capture = true
+		if arg.begins_with("--until="):
+			shot_until = arg.trim_prefix("--until=")
+		if arg.begins_with("--from="):
+			shot_from = arg.trim_prefix("--from=")
 		if arg == "--capture":
 			capture = true
 	if OS.get_environment("ROLEPLAY_CAPTURE") == "1":
@@ -331,47 +351,60 @@ func _shots() -> void:
 	await get_tree().create_timer(0.2).timeout
 	for _i in 4:
 		await get_tree().process_frame
-	await _shot("basin-robot")
-	_place(vehicle, 1240.0, 1840.0, 0.0)
-	terrain.ensure_patch(Vector2(1240.0, 1840.0))
-	terrain.rebuild_around(vehicle.global_position)
-	camera.configure("robot")
-	await _shot("basin-before-cut")
-	vehicle.blade_angle = -0.62
-	vehicle._pose_blade()
-	var fwd := vehicle.forward()
-	var right := Vector3(fwd.z, 0.0, -fwd.x)
-	var walked := 0.0
-	while walked < 12.0:
-		var shoulder := vehicle.global_position + right * 2.6
-		var edge := terrain.sample(shoulder.x, shoulder.z) - 1.05
-		var at := vehicle.global_position + fwd * 3.15
-		terrain.cut_blade(at.x, at.z, fwd.x, fwd.z, 3.5, edge, float(terrain.spec["repose"]))
-		vehicle.global_position += fwd * 0.4
-		walked += 0.4
-	terrain.refresh_edits()
-	_place(vehicle, vehicle.global_position.x, vehicle.global_position.z, 0.0)
-	vehicle.blade_angle = -0.62
-	vehicle._pose_blade()
-	terrain.rebuild_around(vehicle.global_position)
-	for _i in 4:
+	for _warm in 8:
 		await get_tree().process_frame
-	var floor_h := terrain.sample(vehicle.global_position.x, vehicle.global_position.z)
-	var beside_h := terrain.sample(vehicle.global_position.x + 5.0, vehicle.global_position.z)
-	print("cut ", terrain.patch.field.cut_m3, " fill ", terrain.patch.field.fill_m3, " floor ", floor_h, " beside ", beside_h)
-	var side := Vector3(fwd.z, 0.0, -fwd.x)
-	camera.hold = true
-	var trench := vehicle.global_position - fwd * 5.0
-	camera.camera.global_position = trench + side * 8.0 + Vector3.UP * 3.2
-	camera.camera.look_at(trench + Vector3.UP * 0.2, Vector3.UP)
-	for _j in 3:
-		await get_tree().process_frame
-	await _shot("basin-after-cut")
-	camera.hold = false
-	camera.configure("robot")
-	_activate("human")
-	await _shot("basin-human")
-	_activate("robot")
+	print("play fps ", Engine.get_frames_per_second())
+	if shot_from != "ile":
+		await _shot("basin-robot")
+		sun.rotation_degrees = Vector3(-20.0, 70.0, 0.0)
+		sun.light_energy = 1.25
+		_place(vehicle, 1240.0, 1840.0, 0.0)
+		terrain.ensure_patch(Vector2(1240.0, 1840.0))
+		terrain.rebuild_around(vehicle.global_position)
+		camera.configure("robot")
+		await _frame_trench(vehicle.forward(), 0.0)
+		await _shot("basin-before-cut")
+		vehicle.blade_angle = -0.62
+		vehicle._pose_blade()
+		var fwd := vehicle.forward()
+		var right := Vector3(fwd.z, 0.0, -fwd.x)
+		var walked := 0.0
+		var mid_done := false
+		while walked < 14.0:
+			var shoulder := vehicle.global_position + right * 5.2
+			var edge := terrain.sample(shoulder.x, shoulder.z) - 0.85
+			var at := vehicle.global_position + fwd * 3.15
+			terrain.cut_blade(at.x, at.z, fwd.x, fwd.z, 3.6, edge, float(terrain.spec["repose"]))
+			vehicle.global_position += fwd * 0.35
+			walked += 0.35
+			if not mid_done and walked >= 6.0:
+				mid_done = true
+				terrain.refresh_edits()
+				_place(vehicle, vehicle.global_position.x, vehicle.global_position.z, 0.0)
+				vehicle.blade_angle = -0.62
+				vehicle._pose_blade()
+				if vehicle.dust:
+					vehicle.dust.emitting = true
+				await _frame_trench(fwd, -2.5)
+				await _shot("basin-mid-push")
+				vehicle.dust.emitting = false
+				fwd = vehicle.forward()
+				right = Vector3(fwd.z, 0.0, -fwd.x)
+		terrain.refresh_edits()
+		_place(vehicle, vehicle.global_position.x, vehicle.global_position.z, 0.0)
+		vehicle.blade_angle = 0.35
+		vehicle._pose_blade()
+		terrain.rebuild_around(vehicle.global_position)
+		_log_trench(fwd)
+		await _frame_trench(fwd, -6.0)
+		await _shot("basin-after-cut")
+		camera.hold = false
+		camera.configure("robot")
+		sun.rotation_degrees = Vector3(-16.0, 38.0, 0.0)
+		sun.light_energy = 1.15
+		_activate("human")
+		await _shot("basin-human")
+		_activate("robot")
 	_open_site(1)
 	for _i in 6:
 		await get_tree().process_frame
@@ -384,8 +417,86 @@ func _shots() -> void:
 	camera.distance = 8.0
 	camera.pitch_up = 0.22
 	await _shot("ile-heights")
+	_stand_on_shore()
+	await _shot("ile-shore")
 	print("shots done")
 	get_tree().quit()
+
+
+func _stand_on_shore() -> void:
+	if terrain.spec.get("water") == null:
+		return
+	var water := float(terrain.spec["water"])
+	var origin := human.global_position
+	var best := origin
+	var best_score := 999.0
+	for ring_i in range(2, 28):
+		for k in 10:
+			var ang := TAU * float(k) / 10.0
+			var dist := float(ring_i) * 55.0
+			var x := origin.x + cos(ang) * dist
+			var z := origin.z + sin(ang) * dist
+			var h := terrain.sample(x, z)
+			if h < water + 0.2 or h > water + 1.4:
+				continue
+			var score := absf(h - (water + 0.55))
+			if score < best_score:
+				best_score = score
+				best = Vector3(x, h, z)
+	if best_score > 10.0:
+		var span := float(terrain.field.cols - 1) * terrain.field.spacing
+		for t in 64:
+			var u := float(t) / 63.0 * span
+			for p in [Vector2(u, 90.0), Vector2(u, span - 90.0), Vector2(90.0, u), Vector2(span - 90.0, u)]:
+				var edge_h := terrain.sample(p.x, p.y)
+				if edge_h < water + 0.15 or edge_h > water + 2.2:
+					continue
+				var edge_score := absf(edge_h - (water + 0.6))
+				if edge_score < best_score:
+					best_score = edge_score
+					best = Vector3(p.x, edge_h, p.y)
+	if best_score > 10.0:
+		return
+	var water_at := best
+	var water_h := best.y
+	for i in 24:
+		var ang := TAU * float(i) / 24.0
+		var p := Vector2(best.x, best.z) + Vector2(cos(ang), sin(ang)) * 36.0
+		var h := terrain.sample(p.x, p.y)
+		if h < water_h:
+			water_h = h
+			water_at = Vector3(p.x, h, p.y)
+	var yaw := atan2(water_at.x - best.x, water_at.z - best.z)
+	_place(human, best.x, best.z, yaw)
+	terrain.rebuild_around(human.global_position)
+	var fwd := Vector3(sin(yaw), 0.0, cos(yaw))
+	var side := Vector3(fwd.z, 0.0, -fwd.x)
+	camera.hold = true
+	camera.camera.global_position = human.global_position - fwd * 5.5 + side * 3.5 + Vector3.UP * 2.6
+	camera.camera.look_at(water_at + Vector3.UP * 0.4, Vector3.UP)
+	print("shore ", best, " water ", water)
+
+
+func _frame_trench(fwd: Vector3, back: float) -> void:
+	var side := Vector3(fwd.z, 0.0, -fwd.x)
+	var trench := vehicle.global_position + fwd * back
+	camera.hold = true
+	camera.camera.global_position = trench - fwd * 3.2 + side * 8.0 + Vector3.UP * 3.6
+	camera.camera.look_at(trench + Vector3.UP * 0.15, Vector3.UP)
+	for _i in 2:
+		await get_tree().process_frame
+
+
+func _log_trench(fwd: Vector3) -> void:
+	var side := Vector3(fwd.z, 0.0, -fwd.x)
+	var origin := vehicle.global_position - fwd * 8.0
+	var line := "trench"
+	for i in 9:
+		var p := origin + fwd * float(i) * 1.5
+		var center := terrain.sample(p.x, p.z)
+		var edge := terrain.sample(p.x + side.x * 4.0, p.z + side.z * 4.0)
+		line += " %.2f/%.2f" % [center, edge]
+	print(line, " cut ", terrain.patch.field.cut_m3, " fill ", terrain.patch.field.fill_m3)
 
 
 func _shot(name: String, yaw_offset: float = 0.0) -> void:
@@ -402,3 +513,6 @@ func _shot(name: String, yaw_offset: float = 0.0) -> void:
 	var path := shot_dir.path_join(name + ".png")
 	image.save_png(path)
 	print("wrote ", path, " ", image.get_width(), "x", image.get_height())
+	if shot_until != "" and name == shot_until:
+		print("shots done")
+		get_tree().quit()

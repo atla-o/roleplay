@@ -31,33 +31,100 @@ class Field extends RefCounted:
 static func plane_blade(field: Field, east: float, north: float, fx: float, fz: float, width: float, edge_y: float, repose_deg: float) -> float:
 	var spacing := field.spacing
 	var area := spacing * spacing
-	var under := _cells(field, east, north, spacing * 0.85, maxf(width * 0.5, spacing * 0.7), fx, fz)
+	var side := maxf(width * 0.5, spacing * 0.6)
+	var under := _cells(field, east, north, maxf(spacing * 0.9, 0.4), side, fx, fz)
+	var protected := {}
 	var moved := 0.0
 	for i in under:
+		protected[i] = true
 		var h: float = field.heights[i]
-		if h <= edge_y + 0.02:
+		if h <= edge_y + 0.015:
 			continue
-		var dh: float = minf(h - edge_y, 0.5)
+		var dh: float = minf(h - edge_y, 1.4)
 		field.heights[i] = h - dh
 		field.mark(i)
 		moved += dh * area
 	if moved <= 0.0:
 		return 0.0
-	# A narrow band just ahead of the blade, as wide as the blade, so the spoil
-	# stands up as a windrow instead of being smeared across the cut.
-	# Drop the spoil far enough ahead that a 35° face does not run back and fill the trench.
-	var ahead_dist := maxf(spacing * 1.8, 2.1)
-	var pile_side := minf(maxf(width * 0.34, spacing), width * 0.5)
-	var ahead := _cells(field, east + fx * ahead_dist, north + fz * ahead_dist, maxf(spacing * 0.8, 0.28), pile_side, fx, fz)
-	var pile: PackedInt32Array = ahead if ahead.size() > 0 else under
-	var lift := moved / (float(pile.size()) * area)
-	for i in pile:
-		field.heights[i] = field.heights[i] + lift
-		field.mark(i)
-	_slump(field, pile, repose_deg, fx, fz)
+	# A heap just ahead of the steel, inside the next bite, so the blade keeps
+	# pushing it. The rest spills off both ends as a repose-shaped windrow.
+	var rx := fz
+	var rz := -fx
+	var pile_vol := moved * 0.4
+	var side_vol := moved - pile_vol
+	var reach := maxf(spacing * 0.8, 0.3)
+	var front := _open_cells(field, _cells(field, east + fx * maxf(spacing, 0.7), north + fz * maxf(spacing, 0.7), reach, side * 0.9, fx, fz), protected, edge_y)
+	var placed := _add_volume(field, front, pile_vol, area)
+	side_vol += pile_vol - placed
+	var bands: Array[float] = [0.45, 1.05, 1.75, 2.55]
+	var weights: Array[float] = [1.0, 0.62, 0.32, 0.12]
+	var weight_sum := 0.0
+	for w in weights:
+		weight_sum += w
+	var berm := PackedInt32Array()
+	for side_sign in [-1.0, 1.0]:
+		var unplaced := side_vol * 0.5
+		for b in bands.size():
+			var off: float = side + bands[b]
+			var band := _open_cells(field, _cells(field, east + rx * side_sign * off, north + rz * side_sign * off, maxf(spacing * 1.5, 0.9), maxf(spacing * 0.55, 0.42), fx, fz), protected, edge_y)
+			var give: float = side_vol * 0.5 * weights[b] / weight_sum
+			var got := _add_volume(field, band, give, area)
+			unplaced -= got
+			berm.append_array(band)
+		if unplaced > 0.0001 and berm.size() > 0:
+			_add_volume(field, berm, unplaced, area)
+	_slump(field, berm, repose_deg, fx, fz, protected, edge_y)
+	_even_ridge(field, berm)
 	field.cut_m3 += moved
 	field.fill_m3 += moved
 	return moved
+
+
+static func _even_ridge(field: Field, cells: PackedInt32Array) -> void:
+	var member := {}
+	for i in cells:
+		member[i] = true
+	for _pass in 5:
+		for i in cells:
+			var c := i % field.cols
+			var r := int(i / field.cols)
+			var h: float = field.heights[i]
+			for step in [Vector2i(1, 0), Vector2i(0, 1)]:
+				var nc: int = c + step.x
+				var nr: int = r + step.y
+				if not field.contains(nc, nr):
+					continue
+				var j := field.index(nc, nr)
+				if not member.has(j):
+					continue
+				var other: float = field.heights[j]
+				var diff := h - other
+				if absf(diff) < 0.08:
+					continue
+				var shift := diff * 0.4
+				field.heights[i] = h - shift
+				field.heights[j] = other + shift
+				h = field.heights[i]
+				field.mark(i)
+				field.mark(j)
+
+
+static func _open_cells(field: Field, cells: PackedInt32Array, protected: Dictionary, edge_y: float) -> PackedInt32Array:
+	var open := PackedInt32Array()
+	for i in cells:
+		if not protected.has(i) and field.heights[i] > edge_y + 0.05:
+			open.append(i)
+	return open
+
+
+static func _add_volume(field: Field, cells: PackedInt32Array, volume: float, area: float) -> float:
+	if volume <= 0.0 or cells.is_empty():
+		return 0.0
+	var share := volume / float(cells.size())
+	for i in cells:
+		field.heights[i] = field.heights[i] + share / area
+		field.mark(i)
+	return volume
 
 
 static func _cells(field: Field, east: float, north: float, along: float, side: float, fx: float, fz: float) -> PackedInt32Array:
@@ -78,7 +145,7 @@ static func _cells(field: Field, east: float, north: float, along: float, side: 
 	return found
 
 
-static func _slump(field: Field, seeds: PackedInt32Array, repose_deg: float, fx: float, fz: float) -> void:
+static func _slump(field: Field, seeds: PackedInt32Array, repose_deg: float, fx: float, fz: float, protected: Dictionary, edge_y: float) -> void:
 	var slope := tan(deg_to_rad(repose_deg))
 	var spacing := field.spacing
 	var area := spacing * spacing
@@ -93,13 +160,15 @@ static func _slump(field: Field, seeds: PackedInt32Array, repose_deg: float, fx:
 			var low_h := h
 			for step in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 				var along := float(step.x) * field.spacing * fx + float(step.y) * field.spacing * fz
-				if along < -field.spacing * 0.25:
+				if along < -field.spacing * 0.2:
 					continue
 				var nc: int = c + step.x
 				var nr: int = r + step.y
 				if not field.contains(nc, nr):
 					continue
 				var j := field.index(nc, nr)
+				if protected.has(j) or field.heights[j] <= edge_y + 0.05:
+					continue
 				var other: float = field.heights[j]
 				if other < low_h:
 					low_h = other
@@ -109,7 +178,7 @@ static func _slump(field: Field, seeds: PackedInt32Array, repose_deg: float, fx:
 			var excess := h - low_h - slope * spacing
 			if excess <= 0.08:
 				continue
-			var shift := excess * 0.5
+			var shift := excess * 0.45
 			field.heights[i] = h - shift
 			field.heights[lowest] = low_h + shift
 			field.mark(i)
@@ -173,12 +242,18 @@ class Patch extends RefCounted:
 	func recenter(focus: Vector2, force: bool = false) -> bool:
 		var size := size_m()
 		var center := origin + Vector2(size, size) * 0.5
-		if live and not force and focus.distance_to(center) < 14.0:
+		if live and not force and focus.distance_to(center) < 22.0:
 			return false
+		var old_origin := origin
+		var old_heights := field.heights.duplicate()
+		var old_disturb := field.disturb.duplicate()
+		var had := live
 		if live:
 			bake()
 		origin = Vector2(snappedf(focus.x - size * 0.5, CELL), snappedf(focus.y - size * 0.5, CELL))
 		_fill()
+		if had:
+			_copy_overlap(old_origin, old_heights, old_disturb)
 		live = true
 		return true
 
@@ -202,6 +277,30 @@ class Patch extends RefCounted:
 				continue
 			coarse.heights[int(key)] = float(acc_sum[key]) / float(n)
 			coarse.changed.append(int(key))
+
+	func _copy_overlap(old_origin: Vector2, old_heights: PackedFloat32Array, old_disturb: PackedByteArray) -> void:
+		for r in N:
+			var z := origin.y + float(r) * CELL
+			var orow := (z - old_origin.y) / CELL
+			if orow < 0.0 or orow > float(N - 1):
+				continue
+			var r0 := int(floor(orow))
+			var r1 := mini(r0 + 1, N - 1)
+			var tr := orow - float(r0)
+			for c in N:
+				var x := origin.x + float(c) * CELL
+				var ocol := (x - old_origin.x) / CELL
+				if ocol < 0.0 or ocol > float(N - 1):
+					continue
+				var c0 := int(floor(ocol))
+				var c1 := mini(c0 + 1, N - 1)
+				var tc := ocol - float(c0)
+				var h00: float = old_heights[r0 * N + c0]
+				var h10: float = old_heights[r0 * N + c1]
+				var h01: float = old_heights[r1 * N + c0]
+				var h11: float = old_heights[r1 * N + c1]
+				field.heights[r * N + c] = lerpf(lerpf(h00, h10, tc), lerpf(h01, h11, tc), tr)
+				field.disturb[r * N + c] = old_disturb[r0 * N + c0]
 
 	func _fill() -> void:
 		var spacing := coarse.spacing

@@ -43,21 +43,21 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 			if dist < 18.0:
 				continue
 			var slope := _slope(terrain, east, north)
-			if roll > 0.72 and rocks.size() < 220 and (slope > 0.18 or not forest):
-				var rs := 0.7 + _hash(x + 4, y) * (2.4 if slope > 0.3 else 1.1)
-				rocks.append(_xf(east, h, north, roll * TAU, rs))
+			if roll > 0.48 and rocks.size() < 520 and (slope > 0.1 or not forest):
+				var rs := 0.55 + _hash(x + 4, y) * (2.6 if slope > 0.3 else 1.3)
+				rocks.append(_xf(east, h - 0.15, north, roll * TAU, rs))
 			if not forest or not green:
 				continue
-			if roll > 0.42 and near.size() < 280 and dist < 520.0:
+			if roll > 0.22 and near.size() < 460 and dist < 520.0:
 				var s := 0.75 + _hash(x + 2, y + 1) * 0.7
 				near.append(_xf(east + (_hash(x, y + 3) - 0.5) * 6.0, h, north, roll * TAU, s))
 			elif far.size() < 1400:
 				var s2 := 0.9 + _hash(x + 6, y) * 0.8
 				far.append(_xf(east, h, north, roll * TAU, s2))
-			if _hash(x + 8, y + 8) > 0.55 and grass.size() < 900:
+			if _hash(x + 8, y + 8) > 0.38 and grass.size() < 1400:
 				grass.append(_xf(east, h, north, roll * TAU, 0.8 + roll * 0.7))
-			if _hash(x + 1, y + 9) > 0.78 and shrub.size() < 400:
-				shrub.append(_xf(east, h, north, roll * 3.0, 0.7 + roll * 0.5))
+			if _hash(x + 1, y + 9) > 0.58 and shrub.size() < 800:
+				shrub.append(_xf(east, h, north, roll * 3.0, 0.7 + roll * 0.6))
 	for mesh in pines:
 		_spawn(mesh, near, true, 0.0, 260.0)
 	_spawn(_impostor(), far, false, 180.0, 1400.0)
@@ -67,6 +67,24 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 		_spawn(mesh, shrub, false, 0.0, 160.0)
 	for mesh in boulders:
 		_spawn(mesh, rocks, true, 0.0, 500.0)
+	_collide(near, 0.42, 5.5)
+	_collide(rocks, 0.55, 1.1)
+
+
+func _collide(items: Array[Transform3D], radius: float, height: float) -> void:
+	for xf in items:
+		var body := StaticBody3D.new()
+		body.collision_layer = 1
+		body.collision_mask = 0
+		var shape := CollisionShape3D.new()
+		var cap := CapsuleShape3D.new()
+		cap.radius = radius
+		cap.height = height
+		shape.shape = cap
+		shape.position = Vector3(0.0, height * 0.45, 0.0)
+		body.add_child(shape)
+		body.position = xf.origin
+		add_child(body)
 
 
 func _xf(x: float, y: float, z: float, yaw: float, scale: float) -> Transform3D:

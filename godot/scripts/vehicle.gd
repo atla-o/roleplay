@@ -105,8 +105,8 @@ func _physics_process(dt: float) -> void:
 		if travel > 0.22:
 			travel = 0.0
 			var at := global_position + fwd * 3.15
-			var shoulder := global_position + right * 2.4
-			var edge := terrain.sample(shoulder.x, shoulder.z) + blade_angle * 0.9
+			var shoulder := global_position + right * 4.8
+			var edge := terrain.sample(shoulder.x, shoulder.z) + blade_angle * 0.85
 			terrain.cut_blade(at.x, at.z, fwd.x, fwd.z, 3.5, edge, float(terrain.spec["repose"]))
 		if dust:
 			dust.emitting = true

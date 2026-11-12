@@ -368,7 +368,7 @@ func _build_height_texture() -> void:
 	for r in rows:
 		var src := rows - 1 - r
 		for c in cols:
-			var h: float = field.heights[src * cols + c]
+			var h: float = _shore_height(c, src)
 			var u := int(clampf((h - float(spec["hmin"])) / span, 0.0, 1.0) * 65535.0)
 			var i := (r * cols + c) * 3
 			raw[i] = (u >> 8) & 255
@@ -490,7 +490,7 @@ func _build_apron() -> void:
 		return
 	var span := float(field.cols - 1) * field.spacing
 	var reach := 640.0
-	var step := 32.0
+	var step := 8.0
 	var water_y := -1000.0
 	if spec.get("water") != null:
 		water_y = float(spec["water"])
@@ -565,6 +565,8 @@ func _stream(pos: Vector3) -> void:
 			var key := Vector2i(x, y)
 			keep[key] = true
 			var lod := _lod_for(_chunk_center(key))
+			if _meets_water(key):
+				lod = mini(lod, 1)
 			if built_lod.get(key, -1) != lod or dirty.has(key):
 				_build_chunk(key, lod)
 	var drop: Array = []
@@ -582,6 +584,22 @@ func _inside_patch(center: Vector3) -> bool:
 		return false
 	var inset := 6.0
 	return center.x > patch.origin.x + inset and center.z > patch.origin.y + inset and center.x < patch.origin.x + patch.size_m() - inset and center.z < patch.origin.y + patch.size_m() - inset
+
+
+func _meets_water(key: Vector2i) -> bool:
+	if spec.get("water") == null:
+		return false
+	var wy := float(spec["water"])
+	var c0 := key.x * CHUNK
+	var r0 := key.y * CHUNK
+	var lo := 1.0e9
+	var hi := -1.0e9
+	for r in [r0, mini(field.rows - 1, r0 + CHUNK / 2), mini(field.rows - 1, r0 + CHUNK)]:
+		for c in [c0, mini(field.cols - 1, c0 + CHUNK / 2), mini(field.cols - 1, c0 + CHUNK)]:
+			var h: float = field.height_at(c, r)
+			lo = minf(lo, h)
+			hi = maxf(hi, h)
+	return lo < wy + 3.0 and hi > wy - 8.0
 
 
 func _lod_for(center: Vector3) -> int:
@@ -630,7 +648,7 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 		lookup[id] = idx
 		var px := float(c) * spacing
 		var pz := float(r) * spacing
-		positions.append(Vector3(px, field.height_at(c, r) + drop, pz))
+		positions.append(Vector3(px, _shore_height(c, r) + drop, pz))
 		uvs.append(Vector2(float(c) / cols_f, float(r) / rows_f))
 		var step_n := 2
 		var hl: float = field.height_at(c - step_n, r)
@@ -666,6 +684,26 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 		chunks[key] = node
 	node.mesh = mesh
 	built_lod[key] = stride
+
+
+## Round the bank where it meets the water so a 2 m grid does not stair-step
+## the shoreline. Inland heights stay as surveyed.
+func _shore_height(c: int, r: int) -> float:
+	var h: float = field.height_at(c, r)
+	if spec.get("water") == null:
+		return h
+	var wy := float(spec["water"])
+	var gap := absf(h - wy)
+	if gap > 5.0:
+		return h
+	var acc := 0.0
+	var n := 0
+	for dz in range(-4, 5):
+		for dx in range(-4, 5):
+			acc += field.height_at(c + dx * 2, r + dz * 2)
+			n += 1
+	var blend := (1.0 - gap / 5.0) * 0.9
+	return lerpf(h, acc / float(n), blend)
 
 
 func _steps(a: int, b: int, stride: int) -> PackedInt32Array:

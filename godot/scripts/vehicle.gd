@@ -153,17 +153,12 @@ func _hold_shore() -> void:
 func _pose_blade() -> void:
 	if blade_anim == null or not blade_anim.has_animation("blade-close"):
 		return
-	var clip := blade_anim.get_animation("blade-close")
-	var t := clampf(inverse_lerp(0.45, -0.65, blade_angle), 0.0, 1.0)
+	# The end of blade-close is the model's rest key, which stands the side
+	# wings up as slabs. Stay on the pitched moldboard key.
 	if blade_anim.current_animation != "blade-close":
 		blade_anim.play("blade-close")
-	blade_anim.seek(t * clip.length, true)
+	blade_anim.seek(0.0, true)
 	blade_anim.pause()
-	if blade_node:
-		var dig := clampf(inverse_lerp(-0.08, -0.65, blade_angle), 0.0, 1.0)
-		var rot := blade_node.rotation
-		rot.x += dig * 0.1
-		blade_node.rotation = rot
 	if tilt_node:
 		tilt_node.rotation.z = blade_tilt
 
@@ -178,8 +173,19 @@ func _load_model() -> void:
 	model = (load("res://assets/models/bulldozer.glb") as PackedScene).instantiate()
 	add_child(model)
 	blade_anim = _find_player(model)
-	blade_node = model.find_child("blade", true, false) as Node3D
 	tilt_node = model.find_child("blade-angle", true, false) as Node3D
+	blade_node = tilt_node.get_parent() as Node3D if tilt_node else null
+	# The charcoal frame shares the pitch pivot and slides out as a grey plate
+	# once the blade is in the cut. The yellow moldboard is the blade.
+	if blade_node and tilt_node:
+		var drop: Array = []
+		for child in blade_node.get_children():
+			if child != tilt_node:
+				drop.append(child)
+		for child in drop:
+			blade_node.remove_child(child)
+			child.free()
+		_paint_blade(tilt_node)
 	_collect_tracks(model)
 	_glass(model)
 	_seat_on_ground(model)
@@ -355,6 +361,43 @@ func _collect_tracks(node: Node) -> void:
 		_collect_tracks(child)
 
 
+func _paint_blade(node: Node) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		# The moldboard mesh also carries small grey plates on its back.
+		# Keep the broad faces and drop those short ribs.
+		var src := mi.mesh
+		if src != null:
+			var out := ArrayMesh.new()
+			for s in src.get_surface_count():
+				var arrays: Array = src.surface_get_arrays(s)
+				var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+				var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+				var kept := PackedInt32Array()
+				var i := 0
+				while i + 2 < indices.size():
+					var a: Vector3 = verts[indices[i]]
+					var b: Vector3 = verts[indices[i + 1]]
+					var c: Vector3 = verts[indices[i + 2]]
+					var span := maxf(a.distance_to(b), maxf(b.distance_to(c), c.distance_to(a)))
+					if span > 0.45:
+						kept.append(indices[i])
+						kept.append(indices[i + 1])
+						kept.append(indices[i + 2])
+					i += 3
+				arrays[Mesh.ARRAY_INDEX] = kept
+				out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+				var mat := src.surface_get_material(s)
+				if mat is StandardMaterial3D:
+					var painted := (mat as StandardMaterial3D).duplicate() as StandardMaterial3D
+					painted.albedo_color = Color(0.93, 0.76, 0.1)
+					painted.roughness = 0.55
+					out.surface_set_material(out.get_surface_count() - 1, painted)
+			mi.mesh = out
+	for child in node.get_children():
+		_paint_blade(child)
+
+
 func _glass(node: Node) -> void:
 	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
@@ -448,17 +491,23 @@ func _make_dust() -> void:
 	dust.emitting = false
 	dust.position = Vector3(0.0, 0.35, 2.6)
 	var proc := ParticleProcessMaterial.new()
-	proc.direction = Vector3(0.0, 1.0, -0.2)
+	proc.direction = Vector3(0.0, 0.6, -0.2)
 	proc.spread = 28.0
-	proc.initial_velocity_min = 0.6
-	proc.initial_velocity_max = 1.8
+	proc.initial_velocity_min = 0.4
+	proc.initial_velocity_max = 1.1
 	proc.gravity = Vector3(0.0, -1.2, 0.0)
-	proc.scale_min = 0.6
-	proc.scale_max = 1.6
-	proc.color = Color(0.72, 0.62, 0.46, 0.55)
+	proc.scale_min = 0.15
+	proc.scale_max = 0.4
+	proc.color = Color(0.62, 0.48, 0.32, 0.35)
 	dust.process_material = proc
 	var quad := QuadMesh.new()
-	quad.size = Vector2(0.7, 0.7)
+	quad.size = Vector2(0.18, 0.18)
+	var puff := StandardMaterial3D.new()
+	puff.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	puff.albedo_color = Color(0.62, 0.48, 0.32, 0.4)
+	puff.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	puff.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	quad.material = puff
 	dust.draw_pass_1 = quad
 	var blade_node := model.find_child("blade", true, false)
 	if blade_node:

@@ -469,10 +469,9 @@ func _basin_machine(dig: bool) -> void:
 			vehicle.blade_angle = -0.62
 			vehicle._pose_blade()
 			if vehicle.dust:
-				vehicle.dust.emitting = true
+				vehicle.dust.emitting = false
 			await _frame_trench(fwd, 0.0)
 			await _shot("basin-mid-push")
-			vehicle.dust.emitting = false
 			fwd = vehicle.forward()
 			right = Vector3(fwd.z, 0.0, -fwd.x)
 	terrain.refresh_edits()

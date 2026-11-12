@@ -24,18 +24,15 @@ float hash21(vec2 p) {
 
 // Blur the bed, but ignore samples that climb the bank so the shore stays put.
 float take_bed(vec2 uv, float center, float acc, inout float w) {
-	float h = decode_h(uv);
-	if (h < center + 0.35) {
-		w += 1.0;
-		return acc + h;
-	}
-	return acc;
+	float h = min(decode_h(uv), center + 2.4);
+	w += 1.0;
+	return acc + h;
 }
 
 float bed_near(vec2 uv, float center) {
 	float w = 2.0;
 	float acc = center * 2.0;
-	vec2 s = vec2(0.0035);
+	vec2 s = vec2(0.006);
 	acc = take_bed(uv + vec2(s.x, 0.0), center, acc, w);
 	acc = take_bed(uv - vec2(s.x, 0.0), center, acc, w);
 	acc = take_bed(uv + vec2(0.0, s.y), center, acc, w);
@@ -55,11 +52,12 @@ void fragment() {
 	vec2 uv = vec2((world_pos.x - tile_origin.x) / tile_m.x, 1.0 - (world_pos.z - tile_origin.y) / tile_m.y);
 	bool in_tile = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
 	float raw = in_tile ? decode_h(uv) : water_y - 6.0;
-	// No sheet on ground that rises through the water plane.
-	if (in_tile && raw > water_y - 0.06) {
+	float bed = in_tile ? bed_near(uv, raw) : raw;
+	// Feather across the bank so the 2 m grid does not draw a stair or flecks.
+	float cover = 1.0 - smoothstep(water_y - 0.55, water_y + 0.08, bed);
+	if (cover < 0.04) {
 		discard;
 	}
-	float bed = in_tile ? bed_near(uv, raw) : raw;
 	float depth = max(water_y - bed, 0.0);
 	float rise = 0.0;
 	if (in_tile) {
@@ -96,6 +94,6 @@ void fragment() {
 	ROUGHNESS = 0.94;
 	SPECULAR = 0.0;
 	METALLIC = 0.0;
-	ALPHA = 1.0;
+	ALPHA = cover;
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 }

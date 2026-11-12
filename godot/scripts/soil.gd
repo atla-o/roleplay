@@ -46,67 +46,27 @@ static func plane_blade(field: Field, east: float, north: float, fx: float, fz: 
 		moved += dh * area
 	if moved <= 0.0:
 		return 0.0
-	# A heap just ahead of the steel, inside the next bite, so the blade keeps
-	# pushing it. The rest spills off both ends as a repose-shaped windrow.
+	# Most of the spoil stays in a mound the blade is pushing. The rest is a
+	# short windrow at each end of the steel, not a smear across the plain.
 	var rx := fz
 	var rz := -fx
-	var pile_vol := moved * 0.4
-	var side_vol := moved - pile_vol
-	var reach := maxf(spacing * 0.8, 0.3)
-	var front := _open_cells(field, _cells(field, east + fx * maxf(spacing, 0.7), north + fz * maxf(spacing, 0.7), reach, side * 0.9, fx, fz), protected, edge_y)
-	var placed := _add_volume(field, front, pile_vol, area)
-	side_vol += pile_vol - placed
-	var bands: Array[float] = [0.45, 1.05, 1.75, 2.55]
-	var weights: Array[float] = [1.0, 0.62, 0.32, 0.12]
-	var weight_sum := 0.0
-	for w in weights:
-		weight_sum += w
+	var front := _open_cells(field, _cells(field, east + fx * 0.85, north + fz * 0.85, 0.5, side * 0.85, fx, fz), protected, edge_y)
+	var placed := _add_volume(field, front, moved * 0.62, area)
 	var berm := PackedInt32Array()
+	berm.append_array(front)
+	var leftover := moved - placed
 	for side_sign in [-1.0, 1.0]:
-		var unplaced := side_vol * 0.5
-		for b in bands.size():
-			var off: float = side + bands[b]
-			var band := _open_cells(field, _cells(field, east + rx * side_sign * off, north + rz * side_sign * off, maxf(spacing * 1.5, 0.9), maxf(spacing * 0.55, 0.42), fx, fz), protected, edge_y)
-			var give: float = side_vol * 0.5 * weights[b] / weight_sum
-			var got := _add_volume(field, band, give, area)
-			unplaced -= got
-			berm.append_array(band)
-		if unplaced > 0.0001 and berm.size() > 0:
-			_add_volume(field, berm, unplaced, area)
+		var off := side + 0.4
+		var end_cells := _open_cells(field, _cells(field, east + rx * side_sign * off, north + rz * side_sign * off, 0.7, 0.45, fx, fz), protected, edge_y)
+		var got := _add_volume(field, end_cells, leftover * 0.5, area)
+		leftover -= got
+		berm.append_array(end_cells)
+	if leftover > 0.0001 and berm.size() > 0:
+		_add_volume(field, berm, leftover, area)
 	_slump(field, berm, repose_deg, fx, fz, protected, edge_y)
-	_even_ridge(field, berm)
 	field.cut_m3 += moved
 	field.fill_m3 += moved
 	return moved
-
-
-static func _even_ridge(field: Field, cells: PackedInt32Array) -> void:
-	var member := {}
-	for i in cells:
-		member[i] = true
-	for _pass in 5:
-		for i in cells:
-			var c := i % field.cols
-			var r := int(i / field.cols)
-			var h: float = field.heights[i]
-			for step in [Vector2i(1, 0), Vector2i(0, 1)]:
-				var nc: int = c + step.x
-				var nr: int = r + step.y
-				if not field.contains(nc, nr):
-					continue
-				var j := field.index(nc, nr)
-				if not member.has(j):
-					continue
-				var other: float = field.heights[j]
-				var diff := h - other
-				if absf(diff) < 0.08:
-					continue
-				var shift := diff * 0.4
-				field.heights[i] = h - shift
-				field.heights[j] = other + shift
-				h = field.heights[i]
-				field.mark(i)
-				field.mark(j)
 
 
 ## A pair of shallow grooves under the tracks. The soil they displace is

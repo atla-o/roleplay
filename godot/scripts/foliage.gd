@@ -202,7 +202,9 @@ func _baked_tree(path: String) -> ArrayMesh:
 		return null
 	var src := mi.mesh
 	var xf := mi.transform
+	var birch := path.contains("birch")
 	var out := ArrayMesh.new()
+	var leaf_n := 0
 	for s in src.get_surface_count():
 		var arrays: Array = src.surface_get_arrays(s)
 		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
@@ -214,12 +216,31 @@ func _baked_tree(path: String) -> ArrayMesh:
 			for i in norms.size():
 				norms[i] = (basis * norms[i]).normalized()
 			arrays[Mesh.ARRAY_NORMAL] = norms
+		var mat := src.surface_get_material(s)
+		var leaf := false
+		if birch and mat is StandardMaterial3D:
+			var tint := (mat as StandardMaterial3D).albedo_color
+			var pale := tint.r > 0.35 and tint.g > 0.35
+			var black := tint.r < 0.1 and tint.g < 0.1
+			leaf = not pale and not black
+			if leaf:
+				leaf_n += 1
+				# The second shell sits just outside the first so the crown
+				# reads as leaves instead of one z-fighting blob.
+				if leaf_n > 1:
+					var spread := 1.12
+					for i in verts.size():
+						verts[i].x *= spread
+						verts[i].z *= spread
+						verts[i].y *= 1.04
 		arrays[Mesh.ARRAY_VERTEX] = verts
 		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		var mat := src.surface_get_material(s)
 		if mat is BaseMaterial3D:
 			mat = mat.duplicate()
 			(mat as BaseMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+			if leaf and mat is StandardMaterial3D:
+				(mat as StandardMaterial3D).albedo_color = Color(0.64, 0.74, 0.36)
+				(mat as StandardMaterial3D).roughness = 0.7
 		out.surface_set_material(out.get_surface_count() - 1, mat)
 	root.free()
 	return out

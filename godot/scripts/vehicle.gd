@@ -5,7 +5,10 @@ var terrain: TerrainWorld
 var throttle := 0.0
 var steer := 0.0
 var blade_angle := 0.28
+var blade_tilt := 0.0
+var tilt_node: Node3D
 var travel := 0.0
+var track_travel := 0.0
 var model: Node3D
 var blade_anim: AnimationPlayer
 var track_mats: Array[StandardMaterial3D] = []
@@ -100,6 +103,11 @@ func _physics_process(dt: float) -> void:
 		linear_velocity -= fwd * (speed - signf(speed) * 4.2) * 0.35
 	_pose_blade()
 	_scroll_tracks(speed, dt)
+	if absf(speed) > 0.3:
+		track_travel += absf(speed) * dt
+		if track_travel > 0.2:
+			track_travel = 0.0
+			terrain.stamp_tracks(global_position.x, global_position.z, fwd.x, fwd.z)
 	if blade_angle < -0.08 and absf(speed) > 0.25:
 		travel += absf(speed) * dt
 		if travel > 0.22:
@@ -150,6 +158,8 @@ func _pose_blade() -> void:
 		blade_anim.play("blade-close")
 	blade_anim.seek(t * clip.length, true)
 	blade_anim.pause()
+	if tilt_node:
+		tilt_node.rotation.z = blade_tilt
 
 
 func _scroll_tracks(speed: float, dt: float) -> void:
@@ -162,7 +172,9 @@ func _load_model() -> void:
 	model = (load("res://assets/models/bulldozer.glb") as PackedScene).instantiate()
 	add_child(model)
 	blade_anim = _find_player(model)
+	tilt_node = model.find_child("blade-angle", true, false) as Node3D
 	_collect_tracks(model)
+	print("tracks ", track_mats.size(), " tilt ", tilt_node != null)
 
 
 func _find_player(node: Node) -> AnimationPlayer:
@@ -193,8 +205,8 @@ func _collect_tracks(node: Node) -> void:
 
 func _make_dust() -> void:
 	dust = GPUParticles3D.new()
-	dust.amount = 36
-	dust.lifetime = 0.9
+	dust.amount = 64
+	dust.lifetime = 1.3
 	dust.explosiveness = 0.05
 	dust.emitting = false
 	dust.position = Vector3(0.0, 0.35, 2.6)
@@ -204,12 +216,12 @@ func _make_dust() -> void:
 	proc.initial_velocity_min = 0.6
 	proc.initial_velocity_max = 1.8
 	proc.gravity = Vector3(0.0, -1.2, 0.0)
-	proc.scale_min = 0.35
-	proc.scale_max = 0.9
-	proc.color = Color(0.45, 0.32, 0.18, 0.45)
+	proc.scale_min = 0.6
+	proc.scale_max = 1.6
+	proc.color = Color(0.72, 0.62, 0.46, 0.55)
 	dust.process_material = proc
 	var quad := QuadMesh.new()
-	quad.size = Vector2(0.45, 0.45)
+	quad.size = Vector2(0.7, 0.7)
 	dust.draw_pass_1 = quad
 	var blade_node := model.find_child("blade", true, false)
 	if blade_node:

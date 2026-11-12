@@ -120,6 +120,12 @@ func _coarse_sample(x: float, z: float) -> float:
 	return lerp(lerp(h00, h10, tx), lerp(h01, h11, tx), tz)
 
 
+func stamp_tracks(east: float, north: float, fx: float, fz: float) -> void:
+	ensure_patch(Vector2(east, north))
+	if Soil.stamp_tracks(patch.field, east - patch.origin.x, north - patch.origin.y, fx, fz):
+		_flush_fine()
+
+
 func cut_blade(east: float, north: float, fx: float, fz: float, width: float, edge_y: float, repose: float) -> float:
 	ensure_patch(Vector2(east, north))
 	var moved: float = Soil.plane_blade(patch.field, east - patch.origin.x, north - patch.origin.y, fx, fz, width, edge_y, repose)
@@ -179,7 +185,13 @@ func _flush_fine() -> void:
 		var c := i % n
 		var r := int(i / n)
 		var py := n - 1 - r
-		fine_img.set_pixel(c, py, Color(1, 1, 1))
+		var d: int = patch.field.disturb[i]
+		var col := fine_img.get_pixel(c, py)
+		if d == 180 or d == 200:
+			col.g = 1.0
+		if d == 255 or d == 200:
+			col.r = 1.0
+		fine_img.set_pixel(c, py, col)
 		var x := patch.origin.x + float(c) * cell
 		var z := patch.origin.y + float(r) * cell
 		var cc := clampi(int(x / field.spacing), 0, field.cols - 1)
@@ -599,16 +611,22 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 		lookup[id] = idx
 		var px := float(c) * spacing
 		var pz := float(r) * spacing
+		var maxx := float(c1) * spacing
+		var maxz := float(r1) * spacing
+		if absf(px - maxx) < 0.01:
+			px += 0.06
+		if absf(pz - maxz) < 0.01:
+			pz += 0.06
 		positions.append(Vector3(px, field.height_at(c, r) + drop, pz))
 		uvs.append(Vector2(float(c) / cols_f, float(r) / rows_f))
-		var step_n := maxi(stride, 1)
+		var step_n := 2
 		var hl: float = field.height_at(c - step_n, r)
 		var hr: float = field.height_at(c + step_n, r)
 		var hd: float = field.height_at(c, r - step_n)
 		var hu: float = field.height_at(c, r + step_n)
 		var nrm := Vector3(hl - hr, float(step_n) * spacing * 2.0, hd - hu).normalized()
 		if drop < 0.0:
-			nrm = Vector3(0.0, 0.35, 0.0).normalized()
+			nrm = Vector3(0.0, -1.0, 0.0)
 		normals.append(nrm)
 		return idx
 	for j in range(rs.size() - 1):

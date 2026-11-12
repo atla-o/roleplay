@@ -109,6 +109,47 @@ static func _even_ridge(field: Field, cells: PackedInt32Array) -> void:
 				field.mark(j)
 
 
+## A pair of shallow grooves under the tracks. The soil they displace is
+## piled between them, so the print does not create or lose volume.
+static func stamp_tracks(field: Field, east: float, north: float, fx: float, fz: float) -> bool:
+	var rx := fz
+	var rz := -fx
+	var area := field.spacing * field.spacing
+	var moved := 0.0
+	var grooved := PackedInt32Array()
+	for side in [-0.9, 0.9]:
+		var cells := _cells(field, east + rx * side, north + rz * side, 0.4, 0.26, fx, fz)
+		for i in cells:
+			if field.disturb[i] == 180 or field.disturb[i] == 200:
+				continue
+			field.heights[i] -= 0.04
+			field.disturb[i] = 200 if field.disturb[i] == 255 else 180
+			field.changed.append(i)
+			moved += 0.04 * area
+			grooved.append(i)
+	if moved <= 0.0:
+		return false
+	var crown := _cells(field, east, north, 0.4, 0.28, fx, fz)
+	if crown.is_empty():
+		crown = grooved
+	var lift := moved / (float(crown.size()) * area)
+	for i in crown:
+		if field.disturb[i] == 180 or field.disturb[i] == 200:
+			continue
+		field.heights[i] += lift
+	if crown.size() > 0:
+		# Anything the crown could not take (it was all track) goes back evenly.
+		var parked := 0.0
+		for i in crown:
+			if field.disturb[i] == 180 or field.disturb[i] == 200:
+				parked += lift * area
+		if parked > 0.0 and grooved.size() > 0:
+			var back := parked / (float(grooved.size()) * area)
+			for i in grooved:
+				field.heights[i] += back
+	return true
+
+
 static func _open_cells(field: Field, cells: PackedInt32Array, protected: Dictionary, edge_y: float) -> PackedInt32Array:
 	var open := PackedInt32Array()
 	for i in cells:

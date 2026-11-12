@@ -25,6 +25,29 @@ uniform float patch_live = 0.0;
 varying vec3 world_pos;
 varying vec3 world_normal;
 
+float hash12(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+// Four crops of a tile, blended so the repeat is not a grid and has no shared direction.
+vec3 stochastic(sampler2D tex, vec2 uv) {
+	vec2 iuv = floor(uv);
+	vec2 fuv = fract(uv);
+	vec2 sm = fuv * fuv * (3.0 - 2.0 * fuv);
+	// Offsets are shared by the cells that meet at a corner, and the sample uses
+	// the absolute uv, so the blend has no seam.
+	vec2 o00 = vec2(hash12(iuv), hash12(iuv + vec2(17.0, 3.0))) * 2.0;
+	vec2 o10 = vec2(hash12(iuv + vec2(1.0, 0.0)), hash12(iuv + vec2(19.0, 5.0))) * 2.0;
+	vec2 o01 = vec2(hash12(iuv + vec2(0.0, 1.0)), hash12(iuv + vec2(13.0, 9.0))) * 2.0;
+	vec2 o11 = vec2(hash12(iuv + vec2(1.0, 1.0)), hash12(iuv + vec2(23.0, 11.0))) * 2.0;
+	vec2 base = uv * 0.37;
+	vec3 c00 = texture(tex, base + o00).rgb;
+	vec3 c10 = texture(tex, base + o10).rgb;
+	vec3 c01 = texture(tex, base + o01).rgb;
+	vec3 c11 = texture(tex, base + o11).rgb;
+	return mix(mix(c00, c10, sm.x), mix(c01, c11, sm.x), sm.y);
+}
+
 vec3 triplanar_color(sampler2D tex, vec3 p, vec3 n, float scale) {
 	vec3 b = pow(abs(n), vec3(4.0));
 	b /= max(b.x + b.y + b.z, 0.0001);
@@ -47,40 +70,32 @@ void fragment() {
 	float sat_l = dot(sat, vec3(0.25, 0.5, 0.25));
 	vec3 nrm = normalize(world_normal);
 	float slope = clamp(1.0 - nrm.y, 0.0, 1.0);
-	// Macro blotches, tens of metres across. Not the fine ripple that was an alias.
-	float macro = texture(gravel_alb, world_pos.xz * 0.018).g;
+	float dist = distance(world_pos, CAMERA_POSITION_WORLD);
+	// High-frequency detail aliases into streaks past a few dozen metres.
+	float detail_fade = 1.0 - smoothstep(28.0, 150.0, dist);
+	float macro = stochastic(gravel_alb, world_pos.xz * 0.018).g;
+	vec3 gravel_near = stochastic(gravel_alb, world_pos.xz * 0.11);
+	vec3 gravel_far = texture(gravel_alb, world_pos.xz * 0.006).rgb;
+	vec3 gravel = mix(gravel_far, gravel_near, detail_fade);
+	vec3 rock = stochastic(rock_alb, world_pos.xz * 0.07);
+	vec3 floor_t = mix(stochastic(forest_alb, world_pos.xz * 0.09), stochastic(leaves_alb, world_pos.xz * 0.13), macro);
+	vec3 shore = stochastic(shore_alb, world_pos.xz * 0.1);
 
-	float jitter = texture(gravel_alb, world_pos.xz * 0.031 + vec2(3.1, 1.7)).r;
-	vec3 gravel_a = triplanar_color(gravel_alb, world_pos, nrm, 0.17);
-	vec3 gravel_b = triplanar_color(gravel_alb, world_pos.zyx + vec3(9.0, 0.0, 4.0), nrm, 0.13);
-	vec3 gravel = mix(gravel_a, gravel_b, jitter);
-	vec3 rock_a = triplanar_color(rock_alb, world_pos, nrm, 0.045);
-	vec3 rock_b = triplanar_color(rock_alb, vec3(world_pos.z, world_pos.y, -world_pos.x), nrm, 0.034);
-	vec3 rock = mix(rock_a, rock_b, 0.45 + jitter * 0.3);
-	vec3 floor_a = triplanar_color(forest_alb, world_pos, nrm, 0.16);
-	vec3 floor_b = triplanar_color(forest_alb, vec3(world_pos.z, world_pos.y, -world_pos.x) + vec3(6.0, 0.0, 2.0), nrm, 0.11);
-	vec3 floor_t = mix(floor_a, floor_b, jitter);
-	vec3 leaves = triplanar_color(leaves_alb, world_pos, nrm, 0.24);
-	vec3 shore = triplanar_color(shore_alb, world_pos, nrm, 0.28);
-
-	// Flats are frost-shattered gravel. The coursed rock texture stays on slopes,
-	// where a banded albedo does not read as furrows across the plain.
-	vec3 detail = mix(gravel, rock, smoothstep(0.08, 0.42, slope));
-	detail = mix(detail, gravel, jitter * 0.25);
-	vec3 alb = mix(detail, sat, 0.18);
-	alb = mix(alb, alb * vec3(0.78, 0.84, 0.9), 0.42);
-	alb = alb / (1.0 + max(alb - vec3(0.62), vec3(0.0)) * 1.6);
+	vec3 detail = mix(gravel, rock, smoothstep(0.22, 0.55, slope) * detail_fade);
+	// Cool the orange sand so the plain reads as gravel, not a dune.
+	detail = mix(detail, detail * vec3(0.78, 0.84, 0.88), 0.45);
+	vec3 alb = mix(detail, sat, mix(0.08, 0.22, detail_fade));
+	alb = alb / (1.0 + max(alb - vec3(0.7), vec3(0.0)) * 1.2);
 	if (forest > 0.5) {
 		float canopy = clamp((sat.g - max(sat.r, sat.b)) * 4.0, 0.0, 1.0);
-		detail = mix(floor_t, leaves, clamp(macro * 0.7 + jitter * 0.3, 0.0, 1.0));
-		detail = mix(detail, rock, smoothstep(0.18, 0.55, slope));
+		detail = mix(floor_t, rock, smoothstep(0.22, 0.55, slope));
 		float shore_w = 0.0;
 		if (water_y > -100.0) {
-			shore_w = 1.0 - smoothstep(0.05, 2.4, world_pos.y - water_y);
+			shore_w = 1.0 - smoothstep(0.05, 3.2, world_pos.y - water_y);
 		}
 		detail = mix(detail, shore, shore_w * (1.0 - slope));
-		alb = mix(detail, sat, 0.18 + canopy * 0.22);
-		alb *= 0.78 + sat_l * 0.35;
+		alb = mix(detail, sat, 0.12 + canopy * 0.16);
+		alb *= 1.15 + sat_l * 0.2;
 	}
 	float wet = 0.0;
 	if (water_y > -100.0) {
@@ -89,28 +104,30 @@ void fragment() {
 	}
 
 	float cut = texture(disturb_map, uv).r;
+	float tracks = 0.0;
 	vec2 fuv = (world_pos.xz - patch_origin) / max(patch_size, 0.001);
 	if (patch_live > 0.5 && fuv.x >= 0.0 && fuv.y >= 0.0 && fuv.x <= 1.0 && fuv.y <= 1.0) {
-		cut = max(cut, texture(fine_cut, vec2(fuv.x, 1.0 - fuv.y)).r);
+		vec4 fine = texture(fine_cut, vec2(fuv.x, 1.0 - fuv.y));
+		cut = max(cut, fine.r);
+		tracks = fine.g;
 	}
-	vec3 mud = triplanar_color(mud_alb, world_pos, nrm, 0.55);
-	alb = mix(alb, mud, smoothstep(0.08, 0.55, cut) * 0.82);
+	// Fresh spoil is lighter and rougher than the crust it came out of.
+	vec3 spoil = texture(mud_alb, world_pos.xz * 0.12).rgb;
+	spoil = mix(spoil, vec3(0.8, 0.68, 0.5), 0.78);
+	alb = mix(alb, spoil, smoothstep(0.25, 0.9, cut) * 0.72);
+	alb = mix(alb, alb * vec3(0.62, 0.58, 0.5), tracks * 0.7);
 	ALBEDO = alb;
-	ROUGHNESS = mix(0.92, 0.62, cut);
+	ROUGHNESS = mix(0.94, 1.0, max(cut, tracks));
 	SPECULAR = 0.02;
 	METALLIC = 0.0;
 
-	vec2 nuv = world_pos.xz * 0.07;
-	vec3 gn = texture(gravel_nrm, nuv).rgb;
-	vec3 gn2 = texture(gravel_nrm, vec2(nuv.y, -nuv.x) * 0.8 + 0.37).rgb;
-	vec3 rn = texture(rock_nrm, nuv * 0.65).rgb;
-	vec3 base_n = forest > 0.5 ? texture(forest_nrm, nuv).rgb : mix(gn, rn, 0.65);
-	vec3 dn = (mix(base_n, gn2, 0.5) * 2.0 - 1.0);
-	float nstr = slope > 0.22 ? 0.04 : 0.0;
-	if (cut > 0.2) {
-		nstr = 0.03;
-	}
-	vec3 n = nrm + vec3(dn.x, 0.0, dn.y) * nstr;
-	n.y = max(n.y, 0.28);
+	vec3 n = nrm;
+	float crumb = hash12(floor(world_pos.xz * 8.0)) - 0.5;
+	float crumb2 = hash12(floor(world_pos.xz * 8.0 + vec2(4.0, 1.0))) - 0.5;
+	n += vec3(crumb, 0.0, crumb2) * cut * 0.07;
+	// A groove across each track so the print catches the light.
+	float groove = sin(dot(world_pos.xz, normalize(vec2(nrm.z, -nrm.x) + vec2(0.001))) * 14.0);
+	n += vec3(groove, 0.0, 0.0) * tracks * 0.2;
+	n.y = max(n.y, 0.35);
 	NORMAL = normalize((VIEW_MATRIX * vec4(normalize(n), 0.0)).xyz);
 }

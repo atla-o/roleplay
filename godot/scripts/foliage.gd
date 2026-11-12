@@ -28,7 +28,8 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 	var grass: Array[Transform3D] = []
 	var shrub: Array[Transform3D] = []
 	var rocks: Array[Transform3D] = []
-	var step := 8
+	var logs: Array[Transform3D] = []
+	var step := 6
 	for y in range(0, img.get_height(), step):
 		for x in range(0, img.get_width(), step):
 			var px := img.get_pixel(x, y)
@@ -40,15 +41,15 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 			var roll := _hash(x, y)
 			var green := px.g > px.r + 0.025 and px.g > 0.08
 			var dist := Vector2(east, north).distance_to(spawn)
-			if dist < 18.0:
+			if dist < 10.0:
 				continue
 			var slope := _slope(terrain, east, north)
-			if roll > 0.48 and rocks.size() < 520 and (slope > 0.1 or not forest):
-				var rs := 0.55 + _hash(x + 4, y) * (2.6 if slope > 0.3 else 1.3)
-				rocks.append(_xf(east, h - 0.15, north, roll * TAU, rs))
+			if roll > 0.35 and rocks.size() < 900 and (slope > 0.08 or not forest):
+				var rs := 0.8 + _hash(x + 4, y) * (3.2 if slope > 0.3 else 1.6)
+				rocks.append(_xf(east, h - 0.2, north, roll * TAU, rs))
 			if not forest or not green:
 				continue
-			if roll > 0.22 and near.size() < 460 and dist < 520.0:
+			if roll > 0.12 and near.size() < 720 and dist < 640.0:
 				var s := 0.75 + _hash(x + 2, y + 1) * 0.7
 				near.append(_xf(east + (_hash(x, y + 3) - 0.5) * 6.0, h, north, roll * TAU, s))
 			elif far.size() < 1400:
@@ -56,8 +57,10 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 				far.append(_xf(east, h, north, roll * TAU, s2))
 			if _hash(x + 8, y + 8) > 0.38 and grass.size() < 1400:
 				grass.append(_xf(east, h, north, roll * TAU, 0.8 + roll * 0.7))
-			if _hash(x + 1, y + 9) > 0.58 and shrub.size() < 800:
+			if _hash(x + 1, y + 9) > 0.42 and shrub.size() < 1100:
 				shrub.append(_xf(east, h, north, roll * 3.0, 0.7 + roll * 0.6))
+			if _hash(x + 5, y + 2) > 0.86 and logs.size() < 220:
+				logs.append(_log_xf(east, h + 0.18, north, roll * TAU))
 	for mesh in pines:
 		_spawn(mesh, near, true, 0.0, 260.0)
 	_spawn(_impostor(), far, false, 180.0, 1400.0)
@@ -67,6 +70,7 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 		_spawn(mesh, shrub, false, 0.0, 160.0)
 	for mesh in boulders:
 		_spawn(mesh, rocks, true, 0.0, 500.0)
+	_spawn(_log_mesh(), logs, true, 0.0, 180.0)
 	_collide(near, 0.42, 5.5)
 	_collide(rocks, 0.55, 1.1)
 
@@ -85,6 +89,35 @@ func _collide(items: Array[Transform3D], radius: float, height: float) -> void:
 		body.add_child(shape)
 		body.position = xf.origin
 		add_child(body)
+
+
+func _log_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var sides := 6
+	var length := 3.2
+	var radius := 0.16
+	for i in sides:
+		var a0 := TAU * float(i) / float(sides)
+		var a1 := TAU * float(i + 1) / float(sides)
+		var x0 := Vector3(-length * 0.5, cos(a0) * radius, sin(a0) * radius)
+		var x1 := Vector3(length * 0.5, cos(a0) * radius, sin(a0) * radius)
+		var y0 := Vector3(-length * 0.5, cos(a1) * radius, sin(a1) * radius)
+		var y1 := Vector3(length * 0.5, cos(a1) * radius, sin(a1) * radius)
+		for p in [x0, x1, y0, y0, x1, y1]:
+			st.set_color(Color(0.32, 0.2, 0.1))
+			st.add_vertex(p)
+	st.generate_normals()
+	var mesh := st.commit()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.34, 0.22, 0.12)
+	mat.roughness = 0.92
+	mesh.surface_set_material(0, mat)
+	return mesh
+
+
+func _log_xf(x: float, y: float, z: float, yaw: float) -> Transform3D:
+	return Transform3D(Basis(Vector3.UP, yaw), Vector3(x, y, z))
 
 
 func _xf(x: float, y: float, z: float, yaw: float, scale: float) -> Transform3D:

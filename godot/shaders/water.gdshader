@@ -31,15 +31,15 @@ void fragment() {
 			discard;
 		}
 	}
-	float shore = smoothstep(0.0, 2.2, depth);
+	float shore = smoothstep(0.0, 4.5, depth);
 	vec2 w1 = world_pos.xz * 0.18 + vec2(TIME * 0.04, TIME * 0.015);
 	vec2 w2 = world_pos.xz * 0.31 + vec2(-TIME * 0.02, TIME * 0.03);
 	vec3 wn = texture(wave_nrm, w1).rgb * 2.0 - 1.0;
 	wn += texture(wave_nrm, w2).rgb * 2.0 - 1.0;
 	wn = normalize(vec3(wn.x, 1.4, wn.y));
-	vec3 shallow = vec3(0.34, 0.42, 0.32);
-	vec3 deep = vec3(0.015, 0.06, 0.09);
-	vec3 water = mix(shallow, deep, shore);
+	vec3 shallow = vec3(0.55, 0.66, 0.48);
+	vec3 deep = vec3(0.04, 0.12, 0.16);
+	vec3 water = mix(shallow, deep, smoothstep(0.2, 0.85, shore));
 	vec3 up_view = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
 	float fres = pow(1.0 - clamp(dot(normalize(VIEW), up_view), 0.0, 1.0), 3.0);
 	vec2 ref_uv = vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y) + wn.xz * 0.025;

@@ -37,9 +37,14 @@ func _process(dt: float) -> void:
 		fwd = Vector3(0.0, 0.0, 1.0)
 	fwd = fwd.normalized()
 	var right := Vector3(fwd.z, 0.0, -fwd.x)
+	var dig := 0.0
+	if target.get("blade_angle") != null:
+		dig = clampf(-float(target.blade_angle) / 0.65, 0.0, 1.0)
+	var ahead := look_ahead + dig * 4.0
+	var pitch := lerpf(pitch_up, 0.26, dig)
 	var orbit := (fwd * cos(yaw_offset) + right * sin(yaw_offset)).normalized()
-	var focus := target.global_position + fwd * look_ahead + Vector3.UP * look_height
-	var cam_pos := focus - orbit * distance * cos(pitch_up) + Vector3.UP * distance * sin(pitch_up)
+	var focus := target.global_position + fwd * ahead + Vector3.UP * look_height
+	var cam_pos := focus - orbit * distance * cos(pitch) + Vector3.UP * distance * sin(pitch)
 	if terrain != null:
 		var ground := terrain.sample(cam_pos.x, cam_pos.z) + (2.2 if distance > 40.0 else 0.8)
 		if cam_pos.y < ground:

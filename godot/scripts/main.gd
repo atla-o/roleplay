@@ -17,6 +17,10 @@ var shot_until := ""
 var shot_from := ""
 var fps_time := 0.0
 var sun: DirectionalLight3D
+var world: Environment
+var bench := false
+var bench_elapsed := 0.0
+var bench_times := PackedFloat32Array()
 
 func _ready() -> void:
 	_read_args()
@@ -39,9 +43,16 @@ func _ready() -> void:
 	_activate("robot")
 	if shot_dir != "":
 		_shots()
+	elif bench:
+		camera.hold = true
+		vehicle.set_physics_process(false)
+		human.set_physics_process(false)
 
 
 func _process(dt: float) -> void:
+	if bench and shot_dir == "":
+		_bench_frame(dt)
+		return
 	fps_time += dt
 	if fps_time > 2.0:
 		fps_time = 0.0
@@ -101,6 +112,10 @@ func _process(dt: float) -> void:
 			vehicle.blade_angle = minf(0.45, vehicle.blade_angle + rate)
 		if lower:
 			vehicle.blade_angle = maxf(-0.65, vehicle.blade_angle - rate)
+		if Input.is_key_pressed(KEY_Z):
+			vehicle.blade_tilt = maxf(-0.28, vehicle.blade_tilt - rate)
+		if Input.is_key_pressed(KEY_C):
+			vehicle.blade_tilt = minf(0.28, vehicle.blade_tilt + rate)
 	else:
 		var walker: Walker = human
 		walker.wish = Vector2(clampf(side, -1.0, 1.0), clampf(ahead, -1.0, 1.0))
@@ -155,6 +170,7 @@ func _world() -> void:
 		env.sdfgi_use_occlusion = true
 		env.volumetric_fog_enabled = true
 		env.volumetric_fog_density = 0.004
+	world = env
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	add_child(world_env)
@@ -169,10 +185,14 @@ func _world() -> void:
 	add_child(fill)
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 1100.0
-	sun.shadow_bias = 0.03
-	sun.shadow_normal_bias = 0.35
-	sun.directional_shadow_max_distance = 420.0
+	sun.directional_shadow_max_distance = 260.0
+	sun.directional_shadow_split_1 = 0.08
+	sun.directional_shadow_split_2 = 0.22
+	sun.directional_shadow_split_3 = 0.5
+	sun.shadow_bias = 0.18
+	sun.shadow_normal_bias = 2.4
+	sun.shadow_blur = 2.2
+	sun.light_angular_distance = 0.45
 	sun.directional_shadow_blend_splits = true
 	add_child(sun)
 
@@ -199,7 +219,20 @@ func _open_site(index: int) -> void:
 	vehicle.angular_velocity = Vector3.ZERO
 	_place(human, float(spec["spawn"][0]) + 12.0, float(spec["spawn"][1]) - 8.0, 0.0)
 	terrain.focus = vehicle.global_position
+	_tune_site()
 	print("site ", spec["name"], " cut ", terrain.field.cut_m3, " fill ", terrain.field.fill_m3)
+
+
+func _tune_site() -> void:
+	if world == null:
+		return
+	var forest := bool(terrain.spec.get("forest", false))
+	world.ambient_light_energy = 1.15 if forest else 0.62
+	world.tonemap_exposure = 0.92 if forest else 0.7
+	if world.ssao_enabled:
+		world.ssao_intensity = 0.65 if forest else 1.1
+	if sun:
+		sun.light_energy = 1.35 if forest else 1.1
 
 
 func _place(body: Node3D, x: float, z: float, yaw_v: float) -> void:
@@ -337,12 +370,16 @@ func _read_args() -> void:
 			shot_from = arg.trim_prefix("--from=")
 		if arg == "--capture":
 			capture = true
+		if arg == "--bench":
+			bench = true
 	if OS.get_environment("ROLEPLAY_CAPTURE") == "1":
 		capture = true
 	if OS.has_feature("web"):
 		var query := str(JavaScriptBridge.eval("window.location.search", true))
 		if "capture=1" in query:
 			capture = true
+		if "bench=1" in query:
+			bench = true
 
 
 func _shots() -> void:
@@ -375,6 +412,7 @@ func _shots() -> void:
 			var edge := terrain.sample(shoulder.x, shoulder.z) - 0.85
 			var at := vehicle.global_position + fwd * 3.15
 			terrain.cut_blade(at.x, at.z, fwd.x, fwd.z, 3.6, edge, float(terrain.spec["repose"]))
+			terrain.stamp_tracks(vehicle.global_position.x, vehicle.global_position.z, fwd.x, fwd.z)
 			vehicle.global_position += fwd * 0.35
 			walked += 0.35
 			if not mid_done and walked >= 6.0:
@@ -428,53 +466,33 @@ func _stand_on_shore() -> void:
 		return
 	var water := float(terrain.spec["water"])
 	var origin := human.global_position
-	var best := origin
-	var best_score := 999.0
-	for ring_i in range(2, 28):
-		for k in 10:
-			var ang := TAU * float(k) / 10.0
-			var dist := float(ring_i) * 55.0
-			var x := origin.x + cos(ang) * dist
-			var z := origin.z + sin(ang) * dist
-			var h := terrain.sample(x, z)
-			if h < water + 0.2 or h > water + 1.4:
-				continue
-			var score := absf(h - (water + 0.55))
-			if score < best_score:
-				best_score = score
-				best = Vector3(x, h, z)
-	if best_score > 10.0:
-		var span := float(terrain.field.cols - 1) * terrain.field.spacing
-		for t in 64:
-			var u := float(t) / 63.0 * span
-			for p in [Vector2(u, 90.0), Vector2(u, span - 90.0), Vector2(90.0, u), Vector2(span - 90.0, u)]:
-				var edge_h := terrain.sample(p.x, p.y)
-				if edge_h < water + 0.15 or edge_h > water + 2.2:
-					continue
-				var edge_score := absf(edge_h - (water + 0.6))
-				if edge_score < best_score:
-					best_score = edge_score
-					best = Vector3(p.x, edge_h, p.y)
-	if best_score > 10.0:
-		return
-	var water_at := best
-	var water_h := best.y
-	for i in 24:
-		var ang := TAU * float(i) / 24.0
-		var p := Vector2(best.x, best.z) + Vector2(cos(ang), sin(ang)) * 36.0
-		var h := terrain.sample(p.x, p.y)
-		if h < water_h:
-			water_h = h
-			water_at = Vector3(p.x, h, p.y)
-	var yaw := atan2(water_at.x - best.x, water_at.z - best.z)
-	_place(human, best.x, best.z, yaw)
+	for spot in terrain.spec.get("spawns", []):
+		if str(spot["name"]) == "Shore":
+			origin = Vector3(float(spot["at"][0]), 0.0, float(spot["at"][1]))
+			break
+	var look := origin
+	var low := terrain.sample(origin.x, origin.z)
+	var reaches: Array[float] = [40.0, 90.0, 160.0]
+	for reach in reaches:
+		for i in 16:
+			var ang := TAU * float(i) / 16.0
+			var p := Vector2(origin.x, origin.z) + Vector2(cos(ang), sin(ang)) * reach
+			var h := terrain.sample(p.x, p.y)
+			if h < low:
+				low = h
+				look = Vector3(p.x, h, p.y)
+	var yaw := atan2(look.x - origin.x, look.z - origin.z)
+	_place(human, origin.x, origin.z, yaw)
 	terrain.rebuild_around(human.global_position)
-	var fwd := Vector3(sin(yaw), 0.0, cos(yaw))
-	var side := Vector3(fwd.z, 0.0, -fwd.x)
+	var aim := (look - human.global_position)
+	aim.y = 0.0
+	if aim.length() < 0.1:
+		aim = Vector3(0.0, 0.0, 1.0)
+	aim = aim.normalized()
 	camera.hold = true
-	camera.camera.global_position = human.global_position - fwd * 5.5 + side * 3.5 + Vector3.UP * 2.6
-	camera.camera.look_at(water_at + Vector3.UP * 0.4, Vector3.UP)
-	print("shore ", best, " water ", water)
+	camera.camera.global_position = human.global_position - aim * 8.0 + Vector3.UP * 3.8
+	camera.camera.look_at(human.global_position + aim * 18.0 + Vector3.UP * 0.4, Vector3.UP)
+	print("shore ", human.global_position, " look ", look, " water ", water, " low ", low)
 
 
 func _frame_trench(fwd: Vector3, back: float) -> void:
@@ -497,6 +515,45 @@ func _log_trench(fwd: Vector3) -> void:
 		var edge := terrain.sample(p.x + side.x * 4.0, p.z + side.z * 4.0)
 		line += " %.2f/%.2f" % [center, edge]
 	print(line, " cut ", terrain.patch.field.cut_m3, " fill ", terrain.patch.field.fill_m3)
+
+
+func _bench_frame(dt: float) -> void:
+	bench_elapsed += dt
+	if bench_elapsed < 1.2:
+		return
+	bench_times.append(dt)
+	var span := bench_elapsed - 1.2
+	var duration := 14.0
+	var pts: Array[Vector2] = [Vector2(1700, 1700), Vector2(2300, 2100), Vector2(2720, 2700), Vector2(3200, 3000), Vector2(2400, 3300), Vector2(1600, 2500)]
+	var u := clampf(span / duration, 0.0, 0.999)
+	var scaled := u * float(pts.size())
+	var i := mini(int(scaled), pts.size() - 2)
+	var f := scaled - float(i)
+	var a: Vector2 = pts[i].lerp(pts[i + 1], f)
+	var b: Vector2 = pts[i + 1]
+	var heading := b - a
+	if heading.length() < 0.5:
+		heading = Vector2(0.0, 1.0)
+	heading = heading.normalized()
+	var gaze := a + heading * 50.0
+	var y := terrain.sample(a.x, a.y) + 8.0
+	var look := Vector3(gaze.x, terrain.sample(gaze.x, gaze.y) + 1.5, gaze.y)
+	camera.hold = true
+	camera.camera.global_position = Vector3(a.x, y, a.y)
+	camera.camera.look_at(look, Vector3.UP)
+	terrain.focus = camera.camera.global_position
+	if span < duration:
+		return
+	bench_times.sort()
+	var n := bench_times.size()
+	var sum := 0.0
+	for t in bench_times:
+		sum += t
+	var mean := sum / float(maxi(n, 1))
+	var low_i := mini(n - 1, int(float(n) * 0.99))
+	var low_dt: float = bench_times[low_i]
+	print("bench frames ", n, " avg_fps ", 1.0 / mean, " low1_fps ", 1.0 / maxf(low_dt, 0.0001), " mean_ms ", mean * 1000.0)
+	get_tree().quit()
 
 
 func _shot(name: String, yaw_offset: float = 0.0) -> void:

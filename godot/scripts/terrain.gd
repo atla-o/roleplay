@@ -449,7 +449,7 @@ func _build_water() -> void:
 	var span := float(field.cols - 1) * field.spacing
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var y := float(spec["water"]) + 0.35
+	var y := float(spec["water"]) + 0.45
 	# Wide enough that the horizon is water from the island's high ground.
 	var reach := 90000.0
 	var pts := [

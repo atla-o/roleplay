@@ -113,7 +113,7 @@ void fragment() {
 	float wet = 0.0;
 	if (water_y > -100.0) {
 		float above = world_pos.y - water_y;
-		wet = (1.0 - smoothstep(0.0, 1.7, above)) * (1.0 - smoothstep(0.05, 0.55, slope));
+		wet = (1.0 - smoothstep(0.0, 0.65, above)) * (1.0 - smoothstep(0.08, 0.45, slope));
 		vec3 wet_soil = alb * vec3(0.58, 0.54, 0.46);
 		wet_soil = mix(wet_soil, vec3(0.32, 0.36, 0.34), clamp(1.0 - above, 0.0, 1.0) * 0.4);
 		alb = mix(alb, wet_soil, wet * 0.72);

@@ -115,7 +115,7 @@ func _physics_process(dt: float) -> void:
 			travel = 0.0
 			var at := global_position + fwd * 3.15
 			var shoulder := global_position + right * 4.8
-			var edge := terrain.sample(shoulder.x, shoulder.z) + blade_angle * 0.85
+			var edge := terrain.sample(shoulder.x, shoulder.z) + blade_angle * 0.45
 			terrain.cut_blade(at.x, at.z, fwd.x, fwd.z, 3.5, edge, float(terrain.spec["repose"]))
 		if dust:
 			dust.emitting = true
@@ -151,11 +151,21 @@ func _hold_shore() -> void:
 
 
 func _pose_blade() -> void:
-	if blade_node == null:
+	if blade_anim == null or not blade_anim.has_animation("blade-close"):
 		return
-	var dig := clampf(inverse_lerp(0.45, -0.65, blade_angle), 0.0, 1.0)
-	# Positive X pitches the front of the moldboard down into the cut.
-	blade_node.rotation = Vector3(lerpf(-0.08, 0.52, dig), 0.0, blade_tilt)
+	var clip := blade_anim.get_animation("blade-close")
+	var t := clampf(inverse_lerp(0.45, -0.65, blade_angle), 0.0, 1.0)
+	if blade_anim.current_animation != "blade-close":
+		blade_anim.play("blade-close")
+	blade_anim.seek(t * clip.length, true)
+	blade_anim.pause()
+	if blade_node:
+		var dig := clampf(inverse_lerp(-0.08, -0.65, blade_angle), 0.0, 1.0)
+		var rot := blade_node.rotation
+		rot.x += dig * 0.1
+		blade_node.rotation = rot
+	if tilt_node:
+		tilt_node.rotation.z = blade_tilt
 
 
 func _scroll_tracks(speed: float, dt: float) -> void:
@@ -165,13 +175,15 @@ func _scroll_tracks(speed: float, dt: float) -> void:
 
 
 func _load_model() -> void:
-	model = Node3D.new()
-	model.name = "dozer"
+	model = (load("res://assets/models/bulldozer.glb") as PackedScene).instantiate()
 	add_child(model)
-	_build_dozer()
-	blade_node = model.get_node_or_null("blade") as Node3D
-	tilt_node = blade_node
-	print("dozer procedural blade ", blade_node != null)
+	blade_anim = _find_player(model)
+	blade_node = model.find_child("blade", true, false) as Node3D
+	tilt_node = model.find_child("blade-angle", true, false) as Node3D
+	_collect_tracks(model)
+	_glass(model)
+	_dress()
+	print("tracks ", track_mats.size(), " tilt ", tilt_node != null)
 
 
 func _build_dozer() -> void:

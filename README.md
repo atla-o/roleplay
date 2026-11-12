@@ -19,7 +19,7 @@ godot --path godot
 
 `godot --headless --path godot -s res://tests/conservation.gd` checks that a blade cut keeps the volume: cut equals fill, and the sum of the heights does not change.
 
-Export presets are Linux x86_64, Linux arm64 (both Forward+), and Web (Compatibility, no threads). The pull-request workflow exports them. Linux binaries are workflow artifacts. The web build is the preview.
+Export presets are Linux x86_64, Linux arm64 (both Forward+), and Web (Compatibility, no threads). The pull-request workflow exports them. Each Linux build is a `.tar.gz` workflow artifact and is also copied to the preview at `downloads/` (`roleplay-linux-x86_64.tar.gz` and `roleplay-linux-aarch64.tar.gz`). The terrain is inside the tarball. `./run.sh` tries Vulkan Forward+. `./run-compat.sh` forces OpenGL Compatibility, which is the fallback for Asahi. The web build is the preview.
 
 The frame rate is printed to the console every two seconds (`fps N`). On this agent's software OpenGL it was about 2 fps. That number is not a measurement of an M2 MacBook.
 

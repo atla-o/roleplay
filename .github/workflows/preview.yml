@@ -1,16 +1,17 @@
 # Playable Godot preview for this branch.
 # Deploys the web export to gh-pages at pr-preview/pr-<number>/.
-# Native Linux builds are uploaded as workflow artifacts.
+# Linux x86_64 and arm64 tarballs are workflow artifacts and are copied
+# into that preview under downloads/.
 
 name: Deploy PR previews
 
 on:
   pull_request:
     types:
-      - opened
-      - reopened
-      - synchronize
-      - closed
+    - opened
+    - reopened
+    - synchronize
+    - closed
 
 concurrency:
   group: preview-${{ github.event.pull_request.number }}
@@ -24,9 +25,27 @@ env:
   GODOT_VERSION: 4.7.2
 
 jobs:
-  deploy-preview:
+  export-linux:
     if: github.event.action != 'closed'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            godot_os: linux.x86_64
+            preset: Linux x86_64
+            binary: roleplay.x86_64
+            label: x86_64
+            tarball: roleplay-linux-x86_64.tar.gz
+            smoke: true
+          - runner: ubuntu-24.04-arm
+            godot_os: linux.arm64
+            preset: Linux arm64
+            binary: roleplay.arm64
+            label: aarch64
+            tarball: roleplay-linux-aarch64.tar.gz
+            smoke: false
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,7 +56,88 @@ jobs:
           path: |
             /opt/godot
             ~/.local/share/godot/export_templates
-          key: godot-${{ env.GODOT_VERSION }}-templates
+          key: godot-${{ env.GODOT_VERSION }}-${{ matrix.godot_os }}-templates
+
+      - name: Install Godot
+        run: |
+          set -euo pipefail
+          if [ ! -x /opt/godot/godot ]; then
+            mkdir -p /opt/godot
+            curl -fsSL -o /tmp/godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_${{ matrix.godot_os }}.zip"
+            unzip -o /tmp/godot.zip -d /opt/godot
+            mv "/opt/godot/Godot_v${GODOT_VERSION}-stable_${{ matrix.godot_os }}" /opt/godot/godot
+            chmod +x /opt/godot/godot
+          fi
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          if [ ! -f "$TEMPLATE_DIR/linux_release.x86_64" ] || [ ! -f "$TEMPLATE_DIR/linux_release.arm64" ]; then
+            mkdir -p "$TEMPLATE_DIR"
+            curl -fsSL -o /tmp/templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+            rm -rf /tmp/godot-templates
+            unzip -q /tmp/templates.tpz -d /tmp/godot-templates
+            cp -a /tmp/godot-templates/templates/. "$TEMPLATE_DIR/"
+          fi
+          /opt/godot/godot --version
+
+      - name: Export ${{ matrix.preset }}
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          /opt/godot/godot --headless --path godot --export-release "${{ matrix.preset }}" "../build/${{ matrix.binary }}"
+          file "build/${{ matrix.binary }}"
+          test -x "build/${{ matrix.binary }}"
+          # Terrain floats are inside the embedded pck, so the binary is large.
+          test "$(stat -c%s "build/${{ matrix.binary }}")" -gt 40000000
+
+      - name: Pack tarball
+        run: |
+          set -euo pipefail
+          chmod +x tools/package_linux_build.sh
+          ./tools/package_linux_build.sh "build/${{ matrix.binary }}" "build/${{ matrix.tarball }}" "${{ matrix.label }}"
+          tar -tzf "build/${{ matrix.tarball }}"
+
+      - name: Smoke test x86_64 under Xvfb
+        if: matrix.smoke
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          rm -rf /tmp/roleplay-smoke
+          mkdir -p /tmp/roleplay-smoke
+          tar -C /tmp/roleplay-smoke -xzf "build/${{ matrix.tarball }}"
+          cd /tmp/roleplay-smoke/roleplay-linux-${{ matrix.label }}
+          # Compatibility is what this runner can draw. Forward+ has no Vulkan here.
+          timeout 180 xvfb-run -a "./${{ matrix.binary }}" --rendering-driver opengl3 --rendering-method gl_compatibility --quit-after 8 --log-file /tmp/roleplay-smoke/launch.log
+          if grep -E -q "SCRIPT ERROR|Parse Error" /tmp/roleplay-smoke/launch.log; then
+            echo "script error in launch log"
+            cat /tmp/roleplay-smoke/launch.log
+            exit 1
+          fi
+          grep -E "site |dozer aabb" /tmp/roleplay-smoke/launch.log
+          echo "x86_64 launch ok"
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.tarball }}
+          path: build/${{ matrix.tarball }}
+          if-no-files-found: error
+          compression-level: 0
+
+  deploy-preview:
+    if: github.event.action != 'closed'
+    needs: export-linux
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Godot
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-linux.x86_64-templates
 
       - name: Install Godot
         run: |
@@ -50,7 +150,7 @@ jobs:
             chmod +x /opt/godot/godot
           fi
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
-          if [ ! -f "$TEMPLATE_DIR/web_release.zip" ]; then
+          if [ ! -f "$TEMPLATE_DIR/web_nothreads_release.zip" ]; then
             mkdir -p "$TEMPLATE_DIR"
             curl -fsSL -o /tmp/templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
             rm -rf /tmp/godot-templates
@@ -63,28 +163,24 @@ jobs:
 
       - name: Export web preview
         run: |
+          set -euo pipefail
           rm -rf dist
           mkdir -p dist
           /opt/godot/godot --headless --path godot --export-release "Web" ../dist/index.html
           touch dist/.nojekyll
 
-      - name: Export Linux x86_64
-        run: |
-          mkdir -p build
-          /opt/godot/godot --headless --path godot --export-release "Linux x86_64" ../build/roleplay.x86_64
-
-      - name: Export Linux arm64
-        run: |
-          /opt/godot/godot --headless --path godot --export-release "Linux arm64" ../build/roleplay.arm64
-
-      - name: Upload Linux builds
-        uses: actions/upload-artifact@v4
+      - name: Download Linux tarballs
+        uses: actions/download-artifact@v4
         with:
-          name: roleplay-linux
-          path: |
-            build/roleplay.x86_64
-            build/roleplay.arm64
-          if-no-files-found: error
+          pattern: roleplay-linux-*
+          path: dist/downloads
+          merge-multiple: true
+
+      - name: Download page
+        run: |
+          set -euo pipefail
+          python3 tools/inject_preview_downloads.py dist/index.html
+          ls -lh dist/downloads
 
       - name: Deploy preview
         id: preview
@@ -97,7 +193,10 @@ jobs:
 
       - name: Preview URL
         if: steps.preview.outputs.deployment-action == 'deploy'
-        run: echo "Playable preview ${{ steps.preview.outputs.preview-url }}"
+        run: |
+          echo "Playable preview ${{ steps.preview.outputs.preview-url }}"
+          echo "x86_64 ${{ steps.preview.outputs.preview-url }}/downloads/roleplay-linux-x86_64.tar.gz"
+          echo "arm64 ${{ steps.preview.outputs.preview-url }}/downloads/roleplay-linux-aarch64.tar.gz"
 
   remove-preview:
     if: github.event.action == 'closed'

@@ -398,64 +398,15 @@ func _shots() -> void:
 			_frame_lake()
 			await _shot("basin-lake")
 		var dig := shot_only == "" or _take("basin-before-cut") or _take("basin-mid-push") or _take("basin-after-cut") or _take("basin-robot")
-		if not dig:
-			print("shots done")
-			get_tree().quit()
-			return
-		await _shot("basin-robot")
-		sun.rotation_degrees = Vector3(-20.0, 70.0, 0.0)
-		sun.light_energy = 1.25
-		_place(vehicle, 1240.0, 1840.0, 0.0)
-		terrain.ensure_patch(Vector2(1240.0, 1840.0))
-		terrain.rebuild_around(vehicle.global_position)
-		camera.configure("robot")
-		await _frame_trench(vehicle.forward(), 0.0)
-		await _shot("basin-before-cut")
-		vehicle.blade_angle = -0.62
-		vehicle._pose_blade()
-		var fwd := vehicle.forward()
-		var right := Vector3(fwd.z, 0.0, -fwd.x)
-		var walked := 0.0
-		var mid_done := false
-		var walk_to := 14.0
-		if shot_only != "" and not _take("basin-after-cut"):
-			walk_to = 9.4
-		while walked < walk_to:
-			var shoulder := vehicle.global_position + right * 5.2
-			var edge := terrain.sample(shoulder.x, shoulder.z) - 0.85
-			var at := vehicle.global_position + fwd * 3.15
-			terrain.cut_blade(at.x, at.z, fwd.x, fwd.z, 3.6, edge, float(terrain.spec["repose"]))
-			terrain.stamp_tracks(vehicle.global_position.x, vehicle.global_position.z, fwd.x, fwd.z)
-			vehicle.global_position += fwd * 0.35
-			walked += 0.35
-			if not mid_done and walked >= 9.0:
-				mid_done = true
-				terrain.refresh_edits()
-				_place(vehicle, vehicle.global_position.x, vehicle.global_position.z, 0.0)
-				vehicle.blade_angle = -0.62
-				vehicle._pose_blade()
-				if vehicle.dust:
-					vehicle.dust.emitting = true
-				await _frame_trench(fwd, -2.5)
-				await _shot("basin-mid-push")
-				vehicle.dust.emitting = false
-				fwd = vehicle.forward()
-				right = Vector3(fwd.z, 0.0, -fwd.x)
-		terrain.refresh_edits()
-		_place(vehicle, vehicle.global_position.x, vehicle.global_position.z, 0.0)
-		vehicle.blade_angle = 0.35
-		vehicle._pose_blade()
-		terrain.rebuild_around(vehicle.global_position)
-		_log_trench(fwd)
-		await _frame_trench(fwd, -6.0)
-		await _shot("basin-after-cut")
-		camera.hold = false
-		camera.configure("robot")
-		sun.rotation_degrees = Vector3(-16.0, 38.0, 0.0)
-		sun.light_energy = 1.15
-		_activate("human")
-		await _shot("basin-human")
-		_activate("robot")
+		var show_machine := shot_only == "" or _take("basin-dozer") or dig
+		if not show_machine:
+			var want_later := shot_only == "" or _take("ile-robot") or _take("ile-shore") or _take("ile-human") or _take("ile-heights")
+			if not want_later:
+				print("shots done")
+				get_tree().quit()
+				return
+		if show_machine:
+			await _basin_machine(dig)
 	var want_ile := shot_only == "" or shot_from == "ile" or _take("ile-robot") or _take("ile-shore") or _take("ile-human") or _take("ile-heights")
 	if not want_ile:
 		print("shots done")
@@ -478,6 +429,67 @@ func _shots() -> void:
 	await _shot("ile-shore")
 	print("shots done")
 	get_tree().quit()
+
+
+func _basin_machine(dig: bool) -> void:
+	await _shot("basin-robot")
+	sun.rotation_degrees = Vector3(-20.0, 70.0, 0.0)
+	sun.light_energy = 1.25
+	_place(vehicle, 1240.0, 1840.0, 0.0)
+	terrain.ensure_patch(Vector2(1240.0, 1840.0))
+	terrain.rebuild_around(vehicle.global_position)
+	camera.configure("robot")
+	await _frame_dozer(vehicle.forward())
+	await _shot("basin-dozer")
+	if not dig:
+		return
+	await _frame_trench(vehicle.forward(), 0.0)
+	await _shot("basin-before-cut")
+	vehicle.blade_angle = -0.62
+	vehicle._pose_blade()
+	var fwd := vehicle.forward()
+	var right := Vector3(fwd.z, 0.0, -fwd.x)
+	var walked := 0.0
+	var mid_done := false
+	var walk_to := 14.0
+	if shot_only != "" and not _take("basin-after-cut"):
+		walk_to = 8.0
+	while walked < walk_to:
+		var shoulder := vehicle.global_position + right * 5.2
+		var edge := terrain.sample(shoulder.x, shoulder.z) - 0.3
+		var at := vehicle.global_position + fwd * 3.15
+		terrain.cut_blade(at.x, at.z, fwd.x, fwd.z, 3.6, edge, float(terrain.spec["repose"]))
+		terrain.stamp_tracks(vehicle.global_position.x, vehicle.global_position.z, fwd.x, fwd.z)
+		vehicle.global_position += fwd * 0.35
+		walked += 0.35
+		if not mid_done and walked >= 6.0:
+			mid_done = true
+			terrain.refresh_edits()
+			_place(vehicle, vehicle.global_position.x, vehicle.global_position.z, 0.0)
+			vehicle.blade_angle = -0.62
+			vehicle._pose_blade()
+			if vehicle.dust:
+				vehicle.dust.emitting = true
+			await _frame_trench(fwd, 0.0)
+			await _shot("basin-mid-push")
+			vehicle.dust.emitting = false
+			fwd = vehicle.forward()
+			right = Vector3(fwd.z, 0.0, -fwd.x)
+	terrain.refresh_edits()
+	_place(vehicle, vehicle.global_position.x, vehicle.global_position.z, 0.0)
+	vehicle.blade_angle = 0.35
+	vehicle._pose_blade()
+	terrain.rebuild_around(vehicle.global_position)
+	_log_trench(fwd)
+	await _frame_trench(fwd, -4.0)
+	await _shot("basin-after-cut")
+	camera.hold = false
+	camera.configure("robot")
+	sun.rotation_degrees = Vector3(-16.0, 38.0, 0.0)
+	sun.light_energy = 1.15
+	_activate("human")
+	await _shot("basin-human")
+	_activate("robot")
 
 
 func _take(name: String) -> bool:
@@ -548,6 +560,15 @@ func _stand_on_shore() -> void:
 	print("shore ", human.global_position, " look ", look, " water ", water, " low ", low)
 
 
+func _frame_dozer(fwd: Vector3) -> void:
+	var side := Vector3(fwd.z, 0.0, -fwd.x)
+	camera.hold = true
+	camera.camera.global_position = vehicle.global_position + fwd * 6.5 + side * 4.8 + Vector3.UP * 2.0
+	camera.camera.look_at(vehicle.global_position + Vector3.UP * 1.15, Vector3.UP)
+	for _i in 2:
+		await get_tree().process_frame
+
+
 func _frame_trench(fwd: Vector3, along: float) -> void:
 	# Camera sits in front of the blade and off to one side, so the yellow
 	# blade is the near end and the trench runs away behind the tracks.
@@ -555,8 +576,8 @@ func _frame_trench(fwd: Vector3, along: float) -> void:
 	var focus := vehicle.global_position + fwd * 1.8
 	var trail := clampf(-along, 0.0, 8.0)
 	camera.hold = true
-	camera.camera.global_position = focus + fwd * (5.5 + trail * 0.15) + side * (14.0 + trail * 0.2) + Vector3.UP * (5.2 + trail * 0.1)
-	camera.camera.look_at(vehicle.global_position - fwd * 1.5 + Vector3.UP * 0.9, Vector3.UP)
+	camera.camera.global_position = focus + fwd * 4.2 + side * 6.2 + Vector3.UP * 3.0
+	camera.camera.look_at(vehicle.global_position + fwd * 0.4 + Vector3.UP * 0.8, Vector3.UP)
 	for _i in 2:
 		await get_tree().process_frame
 

@@ -169,8 +169,7 @@ func _world() -> void:
 		env.sdfgi_cascades = 4
 		env.sdfgi_min_cell_size = 0.4
 		env.sdfgi_use_occlusion = true
-		env.volumetric_fog_enabled = true
-		env.volumetric_fog_density = 0.0015
+		env.volumetric_fog_enabled = false
 	world = env
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env

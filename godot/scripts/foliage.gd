@@ -97,12 +97,18 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 					logs.append(_log_xf(east, h + 0.12, north, roll * TAU))
 			elif _hash(x + 1, y + 9) > 0.62 and shrub.size() < 900:
 				shrub.append(_xf(east, h, north, roll * 3.0, 0.7 + roll * 0.6))
-	var spots: Array[Vector2] = [Vector2(-16.0, 20.0), Vector2(8.0, 14.0), Vector2(-7.0, 28.0)]
+	var spots: Array[Vector2] = [Vector2(-8.0, 12.0), Vector2(10.0, 18.0), Vector2(-18.0, 26.0)]
 	for spot in spots:
 		var p: Vector2 = spawn + spot
 		var bh := terrain.sample(p.x, p.y)
 		if bh > water + 1.5:
-			birch_near.append(_xf(p.x, bh - 0.05, p.y, 0.6, 1.2))
+			birch_near.append(_xf(p.x, bh - 0.05, p.y, 0.4, 1.25))
+	var litter: Array[Vector2] = [Vector2(-4.0, 6.0), Vector2(-10.0, 9.0), Vector2(2.0, 8.0), Vector2(-7.0, 14.0)]
+	for spot2 in litter:
+		var q: Vector2 = spawn + spot2
+		var qh := terrain.sample(q.x, q.y)
+		shrub.append(_xf(q.x, qh, q.y, 1.2, 0.85))
+		logs.append(_log_xf(q.x + 1.4, qh + 0.1, q.y + 0.6, 0.7))
 	var birch_mesh := _birch_mesh()
 	for mesh in pines:
 		_spawn(mesh, near, true, 0.0, 230.0)
@@ -281,8 +287,9 @@ func _trim_trunk(mesh: Mesh) -> Mesh:
 		while i + 2 < idx.size():
 			var mid := (verts[idx[i]] + verts[idx[i + 1]] + verts[idx[i + 2]]) / 3.0
 			var rad := Vector2(mid.x, mid.z).length()
-			# The stylized pines flare into red branch spikes just above the soil.
-			if not (mid.y < 1.75 and rad > 0.34):
+			# Bark only. The lowest wide triangles are the red branch spikes.
+			var spike := s == 0 and mid.y < 2.9 and rad > 0.28
+			if not spike:
 				kept.append(idx[i])
 				kept.append(idx[i + 1])
 				kept.append(idx[i + 2])

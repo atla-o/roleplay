@@ -113,10 +113,10 @@ void fragment() {
 	float wet = 0.0;
 	if (water_y > -100.0) {
 		float above = world_pos.y - water_y;
-		wet = (1.0 - smoothstep(-0.15, 3.6, above)) * (1.0 - smoothstep(0.02, 0.5, slope));
-		vec3 wet_soil = alb * vec3(0.42, 0.4, 0.34);
-		wet_soil = mix(wet_soil, vec3(0.18, 0.22, 0.2), clamp(1.0 - above, 0.0, 1.0) * 0.55);
-		alb = mix(alb, wet_soil, wet * 0.94);
+		wet = (1.0 - smoothstep(0.0, 1.7, above)) * (1.0 - smoothstep(0.05, 0.55, slope));
+		vec3 wet_soil = alb * vec3(0.58, 0.54, 0.46);
+		wet_soil = mix(wet_soil, vec3(0.32, 0.36, 0.34), clamp(1.0 - above, 0.0, 1.0) * 0.4);
+		alb = mix(alb, wet_soil, wet * 0.72);
 	}
 
 	float cut = texture(disturb_map, uv).r;
@@ -133,8 +133,8 @@ void fragment() {
 	alb = mix(alb, spoil, smoothstep(0.25, 0.9, cut) * 0.72);
 	alb = mix(alb, alb * vec3(0.62, 0.58, 0.5), tracks * 0.7);
 	ALBEDO = alb;
-	ROUGHNESS = mix(mix(0.94, 1.0, max(cut, tracks)), 0.32, wet);
-	SPECULAR = mix(0.02, 0.18, wet);
+	ROUGHNESS = mix(0.96, 0.78, wet);
+	SPECULAR = mix(0.02, 0.05, wet);
 	METALLIC = 0.0;
 
 	vec3 n = nrm;

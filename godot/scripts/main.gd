@@ -488,14 +488,14 @@ func _take(name: String) -> bool:
 
 func _frame_forest() -> void:
 	# Low, looking across the moss at a birch a few metres ahead of the spawn.
-	var birch := Vector3(2184.0, 0.0, 1620.0)
+	var birch := Vector3(2192.0, 0.0, 1612.0)
 	birch.y = terrain.sample(birch.x, birch.z)
-	var at := Vector3(2202.0, 0.0, 1598.0)
-	at.y = terrain.sample(at.x, at.z) + 1.45
-	_place(vehicle, 2235.0, 1575.0, 0.4)
+	var at := Vector3(2204.0, 0.0, 1596.0)
+	at.y = terrain.sample(at.x, at.z) + 1.25
+	_place(vehicle, 2238.0, 1572.0, 0.4)
 	camera.hold = true
 	camera.camera.global_position = at
-	camera.camera.look_at(birch + Vector3(0.0, 2.4, 0.0), Vector3.UP)
+	camera.camera.look_at(birch + Vector3(0.0, 1.5, 0.0), Vector3.UP)
 
 
 func _frame_lake() -> void:
@@ -536,9 +536,15 @@ func _stand_on_shore() -> void:
 	if aim.length() < 0.1:
 		aim = Vector3(0.0, 0.0, 1.0)
 	aim = aim.normalized()
+	# Stand just uphill of the waterline and look along it, so the wet bank
+	# and the shallows fill the frame instead of a distant horizon.
+	var cam_at := Vector3(2002.0, 0.0, 2318.0)
+	cam_at.y = terrain.sample(cam_at.x, cam_at.z) + 1.35
+	var gaze := Vector3(1990.0, float(water) + 0.05, 2334.0)
+	_place(human, 2024.0, 2296.0, yaw)
 	camera.hold = true
-	camera.camera.global_position = human.global_position - aim * 2.4 + Vector3.UP * 1.7
-	camera.camera.look_at(human.global_position + aim * 6.5 + Vector3.UP * 0.05, Vector3.UP)
+	camera.camera.global_position = cam_at
+	camera.camera.look_at(gaze, Vector3.UP)
 	print("shore ", human.global_position, " look ", look, " water ", water, " low ", low)
 
 

@@ -59,8 +59,8 @@ func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
 	mat.shader = load("res://shaders/ground.gdshader")
 	var span := float(spec["cols"] - 1) * field.spacing
 	patch = Soil.Patch.new(field)
-	fine_img = Image.create(Soil.Patch.N, Soil.Patch.N, false, Image.FORMAT_L8)
-	fine_img.fill(Color(0, 0, 0))
+	fine_img = Image.create(Soil.Patch.N, Soil.Patch.N, false, Image.FORMAT_RGBA8)
+	fine_img.fill(Color(0, 0, 0, 1))
 	fine_tex = ImageTexture.create_from_image(fine_img)
 	fine_mesh = MeshInstance3D.new()
 	fine_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
@@ -226,12 +226,23 @@ func _rebuild_fine() -> void:
 	normals.resize(n * n)
 	uvs.resize(n * n)
 	var heights := patch.field.heights
+	var moved := patch.field.disturb
+	var cover := PackedByteArray()
+	cover.resize(n * n)
+	for r in n:
+		for c in n:
+			if moved[r * n + c] == 0:
+				continue
+			for rr in range(maxi(r - 1, 0), mini(r + 2, n)):
+				for cc in range(maxi(c - 1, 0), mini(c + 2, n)):
+					cover[rr * n + cc] = 1
 	for r in n:
 		for c in n:
 			var x := patch.origin.x + float(c) * cell
 			var z := patch.origin.y + float(r) * cell
 			var idx := r * n + c
-			positions[idx] = Vector3(x, heights[idx], z)
+			var lift := 0.03 if cover[idx] != 0 else 0.0
+			positions[idx] = Vector3(x, heights[idx] + lift, z)
 			uvs[idx] = Vector2(clampf(x / span, 0.0, 1.0), clampf(z / span, 0.0, 1.0))
 			var h: float = heights[idx]
 			var hl: float = heights[idx - 1] if c > 0 else h
@@ -239,22 +250,18 @@ func _rebuild_fine() -> void:
 			var hd: float = heights[idx - n] if r > 0 else h
 			var hu: float = heights[idx + n] if r + 1 < n else h
 			normals[idx] = Vector3(hl - hr, cell * 2.0, hd - hu).normalized()
-	var quads := (n - 1) * (n - 1)
-	indices.resize(quads * 6)
-	var w := 0
 	for r in n - 1:
 		for c in n - 1:
 			var a := r * n + c
 			var b := a + 1
 			var d := a + n
 			var e := d + 1
-			indices[w] = a
-			indices[w + 1] = b
-			indices[w + 2] = d
-			indices[w + 3] = b
-			indices[w + 4] = e
-			indices[w + 5] = d
-			w += 6
+			if cover[a] == 0 and cover[b] == 0 and cover[d] == 0 and cover[e] == 0:
+				continue
+			indices.append_array(PackedInt32Array([a, b, d, b, e, d]))
+	if indices.is_empty():
+		fine_mesh.mesh = null
+		return
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = positions
@@ -478,13 +485,15 @@ func _build_water() -> void:
 
 
 func _build_apron() -> void:
-	var spacing := field.spacing
-	var cols := field.cols
-	var rows := field.rows
-	var span := float(cols - 1) * spacing
-	var reach := 480.0
-	var step := 24.0
-	var outer := float(spec["outer_m"])
+	# The island already continues as a ring. A second sheet there fights it.
+	if spec.has("ring"):
+		return
+	var span := float(field.cols - 1) * field.spacing
+	var reach := 640.0
+	var step := 32.0
+	var water_y := -1000.0
+	if spec.get("water") != null:
+		water_y = float(spec["water"])
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var grid := int(ceil((span + reach * 2.0) / step))
@@ -498,15 +507,21 @@ func _build_apron() -> void:
 			var inside := x >= 0.0 and z >= 0.0 and x <= span and z <= span
 			if inside and x > step and z > step and x < span - step and z < span - step:
 				continue
-			var h := outer
-			if x >= 0.0 and z >= 0.0 and x <= span and z <= span:
+			var h := 0.0
+			if inside:
 				h = sample(x, z)
 			else:
 				var ex := clampf(x, 0.0, span)
 				var ez := clampf(z, 0.0, span)
 				var edge := sample(ex, ez)
 				var dist := Vector2(x - ex, z - ez).length()
-				h = lerp(edge, outer, clampf(dist / reach, 0.0, 1.0))
+				var t := clampf(dist / reach, 0.0, 1.0)
+				t = t * t
+				# Fall away from the edge. Never climb above it into the sky.
+				h = edge - 22.0 * t
+				if water_y > -100.0:
+					h = minf(h, lerpf(edge, water_y - 8.0, t))
+				h = minf(h, edge)
 			ids[Vector2i(gx, gy)] = positions.size()
 			positions.append(Vector3(x, h, z))
 	for gy in grid:
@@ -634,14 +649,8 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 			if _under_patch(cs[i], rs[j]) and _under_patch(cs[i + 1], rs[j]) and _under_patch(cs[i], rs[j + 1]) and _under_patch(cs[i + 1], rs[j + 1]):
 				continue
 			_quad(add, indices, cs[i], rs[j], cs[i + 1], rs[j + 1])
-	if _map_edge(key, Vector2i(0, -1)):
-		_skirt(add, indices, cs, r0, true)
-	if _map_edge(key, Vector2i(0, 1)):
-		_skirt(add, indices, cs, r1, true)
-	if _map_edge(key, Vector2i(-1, 0)):
-		_skirt(add, indices, rs, c0, false)
-	if _map_edge(key, Vector2i(1, 0)):
-		_skirt(add, indices, rs, c1, false)
+	# No vertical skirt. A wall at the map edge reads as a sheet in the sky.
+	# The apron outside the tile falls away and the fog takes the horizon.
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = positions

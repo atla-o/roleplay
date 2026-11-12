@@ -66,8 +66,11 @@ void vertex() {
 void fragment() {
 	if (is_fine < 0.5 && patch_live > 0.5) {
 		vec2 puv = (world_pos.xz - patch_origin) / max(patch_size, 0.001);
-		if (puv.x > 0.0 && puv.y > 0.0 && puv.x < 1.0 && puv.y < 1.0) {
-			discard;
+		if (puv.x > -0.002 && puv.y > -0.002 && puv.x < 1.002 && puv.y < 1.002) {
+			vec4 edited = texture(fine_cut, clamp(vec2(puv.x, 1.0 - puv.y), vec2(0.001), vec2(0.999)));
+			if (edited.r > 0.2 || edited.g > 0.2) {
+				discard;
+			}
 		}
 	}
 	vec2 uv_raw = vec2(UV.x, 1.0 - UV.y);
@@ -103,14 +106,17 @@ void fragment() {
 		detail = mix(detail, shore, shore_w * (1.0 - slope));
 		alb = mix(detail, sat, 0.12 + canopy * 0.16);
 		alb *= 1.15 + sat_l * 0.2;
+		vec3 moss = vec3(0.13, 0.24, 0.12);
+		float moss_w = canopy * (1.0 - smoothstep(0.08, 0.4, slope));
+		alb = mix(alb, moss, moss_w * 0.62);
 	}
 	float wet = 0.0;
 	if (water_y > -100.0) {
 		float above = world_pos.y - water_y;
-		wet = (1.0 - smoothstep(0.0, 2.8, above)) * (1.0 - smoothstep(0.02, 0.45, slope));
-		vec3 wet_sand = shore * vec3(0.55, 0.5, 0.42);
-		wet_sand = mix(wet_sand, wet_sand * vec3(0.42, 0.48, 0.46), clamp(1.0 - above, 0.0, 1.0));
-		alb = mix(alb, wet_sand, wet * 0.92);
+		wet = (1.0 - smoothstep(-0.15, 3.6, above)) * (1.0 - smoothstep(0.02, 0.5, slope));
+		vec3 wet_soil = alb * vec3(0.42, 0.4, 0.34);
+		wet_soil = mix(wet_soil, vec3(0.18, 0.22, 0.2), clamp(1.0 - above, 0.0, 1.0) * 0.55);
+		alb = mix(alb, wet_soil, wet * 0.94);
 	}
 
 	float cut = texture(disturb_map, uv).r;

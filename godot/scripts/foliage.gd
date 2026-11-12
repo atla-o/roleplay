@@ -7,7 +7,9 @@ var bushes: Array = []
 var boulders: Array = []
 
 func _ready() -> void:
-	pines = _meshes("res://assets/models/pine_a.glb") + _meshes("res://assets/models/pine_b.glb")
+	for path in ["res://assets/models/pine_a.glb", "res://assets/models/pine_b.glb"]:
+		for mesh in _meshes(path):
+			pines.append(_trim_trunk(mesh))
 	grasses = _meshes("res://assets/models/grass_short.glb") + _meshes("res://assets/models/grass_tall.glb")
 	bushes = _meshes("res://assets/models/bush.glb")
 	boulders = _meshes("res://assets/models/boulder.glb")
@@ -75,6 +77,7 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 						continue
 					var sc := 0.7 + jz * 0.9
 					var yaw := (jx + jz) * TAU
+					hh -= 0.22
 					if d2 < 170.0 and near.size() + birch_near.size() < 1200:
 						if birch_stand and jx > 0.42:
 							birch_near.append(_xf(ex, hh, nz, yaw, sc))
@@ -85,10 +88,21 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 							birch_far.append(_xf(ex, hh, nz, yaw, sc * 1.2))
 						else:
 							far.append(_xf(ex, hh, nz, yaw, sc * 1.2))
-			if _hash(x + 1, y + 9) > 0.55 and shrub.size() < 900:
+			if dist < 120.0 and slope < 0.4:
+				if roll > 0.22 and grass.size() < 2200:
+					grass.append(_xf(east + roll, h, north, roll * TAU, 0.45 + roll * 0.35))
+				if _hash(x + 3, y + 7) > 0.4 and shrub.size() < 1800:
+					shrub.append(_xf(east, h, north, roll * 3.0, 0.55 + roll * 0.5))
+				if _hash(x + 5, y + 2) > 0.72 and logs.size() < 520:
+					logs.append(_log_xf(east, h + 0.12, north, roll * TAU))
+			elif _hash(x + 1, y + 9) > 0.62 and shrub.size() < 900:
 				shrub.append(_xf(east, h, north, roll * 3.0, 0.7 + roll * 0.6))
-			if _hash(x + 5, y + 2) > 0.9 and logs.size() < 180:
-				logs.append(_log_xf(east, h + 0.18, north, roll * TAU))
+	var spots: Array[Vector2] = [Vector2(-16.0, 20.0), Vector2(8.0, 14.0), Vector2(-7.0, 28.0)]
+	for spot in spots:
+		var p: Vector2 = spawn + spot
+		var bh := terrain.sample(p.x, p.y)
+		if bh > water + 1.5:
+			birch_near.append(_xf(p.x, bh - 0.05, p.y, 0.6, 1.2))
 	var birch_mesh := _birch_mesh()
 	for mesh in pines:
 		_spawn(mesh, near, true, 0.0, 230.0)
@@ -209,9 +223,10 @@ func _spawn(mesh: Mesh, items: Array[Transform3D], shadows: bool, begin: float, 
 func _birch_mesh() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_cone(st, 0.0, 4.4, 0.1, 0.045, Color(0.86, 0.84, 0.76))
-	_cone(st, 2.4, 4.8, 0.85, 0.5, Color(0.48, 0.62, 0.3))
-	_cone(st, 3.8, 6.0, 0.5, 0.06, Color(0.58, 0.7, 0.36))
+	_marked_trunk(st, 5.4, 0.13, 0.055)
+	_sphere(st, Vector3(0.0, 4.6, 0.0), 1.35, Color(0.62, 0.78, 0.38))
+	_sphere(st, Vector3(0.35, 5.5, 0.15), 0.85, Color(0.72, 0.84, 0.46))
+	_sphere(st, Vector3(-0.28, 5.15, -0.2), 0.7, Color(0.66, 0.8, 0.4))
 	st.generate_normals()
 	var mesh := st.commit()
 	var mat := ShaderMaterial.new()
@@ -223,9 +238,8 @@ func _birch_mesh() -> ArrayMesh:
 func _birch_impostor() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_cone(st, 0.0, 3.2, 0.12, 0.06, Color(0.84, 0.82, 0.74))
-	_cone(st, 2.2, 5.4, 0.95, 0.35, Color(0.5, 0.64, 0.32))
-	_cone(st, 4.2, 6.4, 0.4, 0.05, Color(0.62, 0.72, 0.38))
+	_marked_trunk(st, 4.6, 0.14, 0.06)
+	_sphere(st, Vector3(0.0, 4.4, 0.0), 1.5, Color(0.64, 0.78, 0.4))
 	st.generate_normals()
 	var mesh := st.commit()
 	var mat := ShaderMaterial.new()
@@ -247,6 +261,80 @@ func _impostor() -> ArrayMesh:
 	mat.shader = load("res://shaders/foliage.gdshader")
 	mesh.surface_set_material(0, mat)
 	return mesh
+
+
+func _trim_trunk(mesh: Mesh) -> Mesh:
+	var src := mesh as ArrayMesh
+	if src == null:
+		return mesh
+	var out := ArrayMesh.new()
+	for s in src.get_surface_count():
+		var arrays: Array = src.surface_get_arrays(s)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		if idx.is_empty():
+			out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			out.surface_set_material(out.get_surface_count() - 1, src.surface_get_material(s))
+			continue
+		var kept := PackedInt32Array()
+		var i := 0
+		while i + 2 < idx.size():
+			var mid := (verts[idx[i]] + verts[idx[i + 1]] + verts[idx[i + 2]]) / 3.0
+			var rad := Vector2(mid.x, mid.z).length()
+			# The stylized pines flare into red branch spikes just above the soil.
+			if not (mid.y < 1.75 and rad > 0.34):
+				kept.append(idx[i])
+				kept.append(idx[i + 1])
+				kept.append(idx[i + 2])
+			i += 3
+		arrays[Mesh.ARRAY_INDEX] = kept
+		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		out.surface_set_material(out.get_surface_count() - 1, src.surface_get_material(s))
+	return out
+
+
+func _marked_trunk(st: SurfaceTool, height: float, r0: float, r1: float) -> void:
+	var rings := 16
+	var sides := 8
+	for ring in rings:
+		var t := float(ring) / float(rings - 1)
+		var y := t * height
+		var rad := lerpf(r0, r1, t)
+		var band := ring % 4 == 2
+		for i in sides:
+			var a0 := TAU * float(i) / float(sides)
+			var a1 := TAU * float(i + 1) / float(sides)
+			var mark := band or (i == 2 and ring % 3 == 0)
+			var color := Color(0.18, 0.2, 0.18) if mark else Color(0.93, 0.94, 0.91)
+			var y1 := (float(ring + 1) / float(rings - 1)) * height
+			if ring == rings - 1:
+				break
+			var rad1 := lerpf(r0, r1, float(ring + 1) / float(rings - 1))
+			var b0 := Vector3(cos(a0) * rad, y, sin(a0) * rad)
+			var b1 := Vector3(cos(a1) * rad, y, sin(a1) * rad)
+			var t0 := Vector3(cos(a0) * rad1, y1, sin(a0) * rad1)
+			var t1 := Vector3(cos(a1) * rad1, y1, sin(a1) * rad1)
+			for p in [b0, t0, b1, b1, t0, t1]:
+				st.set_color(color)
+				st.add_vertex(p)
+
+
+func _sphere(st: SurfaceTool, center: Vector3, radius: float, color: Color) -> void:
+	var lat := 6
+	var lon := 8
+	for j in lat:
+		var v0 := PI * float(j) / float(lat)
+		var v1 := PI * float(j + 1) / float(lat)
+		for i in lon:
+			var u0 := TAU * float(i) / float(lon)
+			var u1 := TAU * float(i + 1) / float(lon)
+			var p00 := center + Vector3(sin(v0) * cos(u0), cos(v0), sin(v0) * sin(u0)) * radius
+			var p10 := center + Vector3(sin(v0) * cos(u1), cos(v0), sin(v0) * sin(u1)) * radius
+			var p01 := center + Vector3(sin(v1) * cos(u0), cos(v1), sin(v1) * sin(u0)) * radius
+			var p11 := center + Vector3(sin(v1) * cos(u1), cos(v1), sin(v1) * sin(u1)) * radius
+			for p in [p00, p01, p10, p10, p01, p11]:
+				st.set_color(color)
+				st.add_vertex(p)
 
 
 func _cone(st: SurfaceTool, y0: float, y1: float, r0: float, r1: float, color: Color) -> void:

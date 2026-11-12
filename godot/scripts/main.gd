@@ -156,8 +156,8 @@ func _world() -> void:
 	env.tonemap_exposure = 0.68
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-	env.fog_density = 0.00009
-	env.fog_aerial_perspective = 0.55
+	env.fog_density = 0.00022
+	env.fog_aerial_perspective = 0.72
 	env.fog_light_color = Color(0.62, 0.72, 0.84)
 	env.fog_sun_scatter = 0.18
 	if RenderingServer.get_current_rendering_method() == "forward_plus":
@@ -170,7 +170,7 @@ func _world() -> void:
 		env.sdfgi_min_cell_size = 0.4
 		env.sdfgi_use_occlusion = true
 		env.volumetric_fog_enabled = true
-		env.volumetric_fog_density = 0.004
+		env.volumetric_fog_density = 0.0015
 	world = env
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
@@ -465,6 +465,7 @@ func _shots() -> void:
 	_open_site(1)
 	for _i in 2:
 		await get_tree().process_frame
+	_frame_forest()
 	await _shot("ile-robot")
 	_activate("human")
 	await _shot("ile-human")
@@ -484,6 +485,18 @@ func _take(name: String) -> bool:
 	if shot_only == "":
 		return true
 	return ("," + shot_only + ",").contains("," + name + ",")
+
+
+func _frame_forest() -> void:
+	# Low, looking across the moss at a birch a few metres ahead of the spawn.
+	var birch := Vector3(2184.0, 0.0, 1620.0)
+	birch.y = terrain.sample(birch.x, birch.z)
+	var at := Vector3(2202.0, 0.0, 1598.0)
+	at.y = terrain.sample(at.x, at.z) + 1.45
+	_place(vehicle, 2235.0, 1575.0, 0.4)
+	camera.hold = true
+	camera.camera.global_position = at
+	camera.camera.look_at(birch + Vector3(0.0, 2.4, 0.0), Vector3.UP)
 
 
 func _frame_lake() -> void:
@@ -525,8 +538,8 @@ func _stand_on_shore() -> void:
 		aim = Vector3(0.0, 0.0, 1.0)
 	aim = aim.normalized()
 	camera.hold = true
-	camera.camera.global_position = human.global_position - aim * 4.0 + Vector3.UP * 9.0
-	camera.camera.look_at(human.global_position + aim * 28.0 - Vector3.UP * 1.2, Vector3.UP)
+	camera.camera.global_position = human.global_position - aim * 2.4 + Vector3.UP * 1.7
+	camera.camera.look_at(human.global_position + aim * 6.5 + Vector3.UP * 0.05, Vector3.UP)
 	print("shore ", human.global_position, " look ", look, " water ", water, " low ", low)
 
 

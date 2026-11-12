@@ -151,21 +151,11 @@ func _hold_shore() -> void:
 
 
 func _pose_blade() -> void:
-	if blade_anim == null or not blade_anim.has_animation("blade-close"):
+	if blade_node == null:
 		return
-	var clip := blade_anim.get_animation("blade-close")
-	var t := clampf(inverse_lerp(0.45, -0.65, blade_angle), 0.0, 1.0)
-	if blade_anim.current_animation != "blade-close":
-		blade_anim.play("blade-close")
-	blade_anim.seek(t * clip.length, true)
-	blade_anim.pause()
-	if blade_node:
-		var dig := clampf(inverse_lerp(-0.08, -0.65, blade_angle), 0.0, 1.0)
-		var rot := blade_node.rotation
-		rot.x += dig * 0.1
-		blade_node.rotation = rot
-	if tilt_node:
-		tilt_node.rotation.z = blade_tilt
+	var dig := clampf(inverse_lerp(0.45, -0.65, blade_angle), 0.0, 1.0)
+	# Positive X pitches the front of the moldboard down into the cut.
+	blade_node.rotation = Vector3(lerpf(-0.08, 0.52, dig), 0.0, blade_tilt)
 
 
 func _scroll_tracks(speed: float, dt: float) -> void:
@@ -175,15 +165,135 @@ func _scroll_tracks(speed: float, dt: float) -> void:
 
 
 func _load_model() -> void:
-	model = (load("res://assets/models/bulldozer.glb") as PackedScene).instantiate()
+	model = Node3D.new()
+	model.name = "dozer"
 	add_child(model)
-	blade_anim = _find_player(model)
-	blade_node = model.find_child("blade", true, false) as Node3D
-	tilt_node = model.find_child("blade-angle", true, false) as Node3D
-	_collect_tracks(model)
-	_glass(model)
-	_dress()
-	print("tracks ", track_mats.size(), " tilt ", tilt_node != null)
+	_build_dozer()
+	blade_node = model.get_node_or_null("blade") as Node3D
+	tilt_node = blade_node
+	print("dozer procedural blade ", blade_node != null)
+
+
+func _build_dozer() -> void:
+	var yellow := Color(0.83, 0.52, 0.07)
+	var steel := Color(0.62, 0.64, 0.66)
+	var dark := Color(0.12, 0.12, 0.13)
+	var rubber := Color(0.08, 0.08, 0.09)
+	for side in [-1.0, 1.0]:
+		_track_side(side, rubber, dark, steel)
+	var belly := _box(Vector3(1.55, 0.55, 2.7), yellow)
+	belly.position = Vector3(0.0, 0.95, 0.05)
+	model.add_child(belly)
+	var hood := _box(Vector3(1.35, 0.48, 1.15), yellow)
+	hood.position = Vector3(0.0, 1.42, 0.72)
+	model.add_child(hood)
+	var cab := _box(Vector3(1.28, 1.05, 1.15), yellow)
+	cab.position = Vector3(0.0, 1.85, -0.35)
+	model.add_child(cab)
+	var glass := _box(Vector3(1.12, 0.62, 0.08), Color(0.55, 0.75, 0.82, 0.45))
+	glass.position = Vector3(0.0, 1.95, 0.24)
+	var gmat := glass.material_override as StandardMaterial3D
+	gmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	gmat.roughness = 0.05
+	gmat.metallic = 0.15
+	model.add_child(glass)
+	var roof := _box(Vector3(1.4, 0.08, 1.3), Color(0.9, 0.9, 0.88))
+	roof.position = Vector3(0.0, 2.42, -0.35)
+	model.add_child(roof)
+	_add_cylinder(model, 0.06, 0.7, Vector3(0.42, 2.15, 0.55), dark)
+	_add_cylinder(model, 0.1, 0.08, Vector3(0.42, 2.52, 0.55), Color(0.2, 0.2, 0.22))
+	var pivot := Node3D.new()
+	pivot.name = "blade"
+	pivot.position = Vector3(0.0, 0.62, 1.28)
+	model.add_child(pivot)
+	pivot.add_child(_moldboard())
+	for side2 in [-1.0, 1.0]:
+		_ram(pivot, Vector3(side2 * 0.72, 0.08, -0.85), Vector3(side2 * 1.35, 0.22, 1.35))
+		_ram(pivot, Vector3(side2 * 0.42, 0.85, -0.15), Vector3(side2 * 0.95, 0.72, 1.25))
+	var ripper := Node3D.new()
+	ripper.position = Vector3(0.0, 0.7, -1.85)
+	model.add_child(ripper)
+	var bar := _box(Vector3(1.5, 0.14, 0.16), dark)
+	bar.position = Vector3(0.0, 0.15, 0.0)
+	ripper.add_child(bar)
+	for x in [-0.5, 0.0, 0.5]:
+		var tine := _box(Vector3(0.08, 0.16, 0.7), steel)
+		tine.position = Vector3(x, -0.05, -0.28)
+		tine.rotation.x = -0.7
+		ripper.add_child(tine)
+
+
+func _track_side(side: float, rubber: Color, dark: Color, steel: Color) -> void:
+	var x := side * 1.08
+	var belt := _box(Vector3(0.46, 0.1, 3.55), rubber)
+	belt.position = Vector3(x, 0.16, 0.0)
+	model.add_child(belt)
+	var frame := _box(Vector3(0.08, 0.16, 3.15), dark)
+	frame.position = Vector3(x - side * 0.16, 0.42, 0.0)
+	model.add_child(frame)
+	for z in [-1.35, -0.8, -0.25, 0.3, 0.85, 1.4]:
+		var roller := _cylinder_mesh(0.15, 0.28, steel)
+		roller.position = Vector3(x, 0.34, z)
+		roller.rotation.z = PI * 0.5
+		model.add_child(roller)
+		var shoe := _box(Vector3(0.5, 0.05, 0.1), dark)
+		shoe.position = Vector3(x, 0.08, z)
+		model.add_child(shoe)
+	var idler := _cylinder_mesh(0.26, 0.3, dark)
+	idler.position = Vector3(x, 0.36, 1.72)
+	idler.rotation.z = PI * 0.5
+	model.add_child(idler)
+	var sprocket := _cylinder_mesh(0.32, 0.28, dark)
+	sprocket.position = Vector3(x, 0.4, -1.72)
+	sprocket.rotation.z = PI * 0.5
+	model.add_child(sprocket)
+
+
+func _moldboard() -> MeshInstance3D:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var cols := 16
+	var rows := 8
+	var width := 3.65
+	for r in rows:
+		var t0 := float(r) / float(rows)
+		var t1 := float(r + 1) / float(rows)
+		for c in cols:
+			var u0 := float(c) / float(cols)
+			var u1 := float(c + 1) / float(cols)
+			var quad: Array[Vector3] = [
+				_blade_point(u0, t0, width),
+				_blade_point(u0, t1, width),
+				_blade_point(u1, t0, width),
+				_blade_point(u1, t0, width),
+				_blade_point(u0, t1, width),
+				_blade_point(u1, t1, width),
+			]
+			for p in quad:
+				var steel_c := Color(0.7, 0.72, 0.74) if p.y > 0.12 else Color(0.82, 0.84, 0.8)
+				st.set_color(steel_c)
+				st.add_vertex(p)
+	st.generate_normals()
+	var mesh := st.commit()
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.metallic = 0.82
+	mat.roughness = 0.28
+	mi.material_override = mat
+	return mi
+
+
+func _blade_point(u: float, t: float, width: float) -> Vector3:
+	var x := lerpf(-width * 0.5, width * 0.5, u)
+	var y := t * 1.18
+	# Concave moldboard: the top curls back toward the machine (-Z in blade space).
+	var z := 1.72 - t * 0.15 - t * t * 0.55
+	var end := 1.0 - smoothstep(0.0, 0.14, u) * smoothstep(1.0, 0.86, u)
+	z -= end * 0.22
+	z += sin(u * PI) * 0.08
+	return Vector3(x, y, z)
 
 
 func _find_player(node: Node) -> AnimationPlayer:

@@ -58,7 +58,7 @@ An apron around each square eases from the measured edge posts toward one sample
 
 Trees and shrubs are meshes built in this repository and instanced where the Sentinel-2 picture is green and the ground is above the reservoir. They are not a stem survey.
 
-The bulldozer is "Tracked bulldozer with raising and angling blade" from 3DAssets.dev, CC0 1.0, https://3dassets.dev/assets/demolition-and-site-clearance-demolition-and-site-clea-b80ffe3a . The blade clip raises and lowers. The human is Quaternius Ultimate Modular Characters, the Worker, CC0, with Idle, Walk and Run. Trees, grass, bush and the boulder are Quaternius Stylized Nature Megakit, CC0 (pine_1, pine_3, grass_common_short, grass_wispy_tall, bush_common, rock_medium_1). Far trees are a generated stand-in, not a scanned stem.
+The dozer in the world is original geometry for this project: a C-frame, a curved steel moldboard, track rollers, and a rear ripper. An unused CC0 file remains at `godot/assets/models/bulldozer.glb` ("Tracked bulldozer with raising and angling blade", 3DAssets.dev, CC0 1.0, https://3dassets.dev/assets/demolition-and-site-clearance-demolition-and-site-clea-b80ffe3a). The human is Quaternius Ultimate Modular Characters, the Worker, CC0, with Idle, Walk and Run. Trees, grass, bush and the boulder are Quaternius Stylized Nature Megakit, CC0 (pine_1, pine_3, grass_common_short, grass_wispy_tall, bush_common, rock_medium_1). Far trees are a generated stand-in, not a scanned stem.
 
 Ground detail textures are Poly Haven CC0, 1K: sandy_gravel_02, rocky_terrain, forest_floor, forest_leaves_03, coast_sand_01, brown_mud. https://polyhaven.com . The API asks for a Poly Haven credit, which this line is.
 

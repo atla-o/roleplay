@@ -60,11 +60,11 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 			var cell := span / float(img.get_width()) * float(step)
 			var gap := 6.0 if excess > 0.11 else 10.0
 			var n := maxi(int(cell / gap), 1)
-			var birch_stand := lum > 0.2 and excess < 0.1
 			for iy in n:
 				for ix in n:
 					var jx := _hash(x + ix * 3 + 1, y + iy * 2)
 					var jz := _hash(x + ix + 4, y + iy * 5 + 2)
+					var birch_stand: bool = jx > 0.78 or (lum > 0.18 and excess < 0.12)
 					var ex := east + (float(ix) + jx) * (cell / float(n))
 					var nz := north + (float(iy) + jz) * (cell / float(n))
 					var hh := terrain.sample(ex, nz)

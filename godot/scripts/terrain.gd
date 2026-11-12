@@ -442,7 +442,7 @@ func _build_water() -> void:
 	var span := float(field.cols - 1) * field.spacing
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var y := float(spec["water"]) + 0.12
+	var y := float(spec["water"]) + 0.08
 	# Wide enough that the horizon is water from the island's high ground.
 	var reach := 90000.0
 	var pts := [
@@ -597,8 +597,8 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 	if c1 <= c0 or r1 <= r0:
 		return
 	# Overlap the next chunk by one step so a LOD crack cannot open onto the sky.
-	var c1_mesh := mini(field.cols - 1, c1 + stride)
-	var r1_mesh := mini(field.rows - 1, r1 + stride)
+	var c1_mesh := mini(field.cols - 1, c1 + stride * 2)
+	var r1_mesh := mini(field.rows - 1, r1 + stride * 2)
 	var cs := _steps(c0, c1_mesh, stride)
 	var rs := _steps(r0, r1_mesh, stride)
 	var positions := PackedVector3Array()

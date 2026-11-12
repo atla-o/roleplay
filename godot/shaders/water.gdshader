@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_back, diffuse_burley, specular_schlick_ggx;
+render_mode blend_mix, depth_draw_opaque, cull_disabled, shadows_disabled, diffuse_burley, specular_schlick_ggx;
 
 uniform sampler2D height_map : filter_linear, repeat_disable;
 uniform sampler2D screen_tex : hint_screen_texture, filter_linear;
@@ -20,6 +20,13 @@ float decode_h(vec2 uv) {
 
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec3 to_cam = CAMERA_POSITION_WORLD - world_pos;
+	float dist = length(to_cam);
+	if (dist > 0.001) {
+		vec3 toward = to_cam / dist;
+		VERTEX += toward * 0.6;
+		world_pos += toward * 0.6;
+	}
 }
 
 void fragment() {
@@ -30,26 +37,26 @@ void fragment() {
 	if (in_tile) {
 		float h_c = decode_h(uv);
 		depth = water_y - h_c;
-		if (depth < -0.18) {
+		if (depth < -2.0) {
 			discard;
 		}
 		// The reservoir is stored as a flat sheet on the waterline, so a
 		// near-zero depth on flat ground is open lake, not a puddle.
 		float rise = max(abs(decode_h(uv + vec2(0.004, 0.0)) - h_c), abs(decode_h(uv + vec2(0.0, 0.004)) - h_c));
-	float flatness = 1.0 - smoothstep(0.2, 1.5, rise);
-	float near_line = 1.0 - smoothstep(0.15, 2.4, abs(depth));
-	open_water = flatness * near_line;
+		float flatness = 1.0 - smoothstep(0.2, 1.5, rise);
+		float near_line = 1.0 - smoothstep(0.15, 2.4, abs(depth));
+		open_water = flatness * near_line;
 	}
 	float shown = mix(max(depth, 0.05), 14.0, open_water);
 
-	float w1 = sin(world_pos.x * 0.42 + world_pos.z * 0.17 + TIME * 0.7);
-	float w2 = sin(world_pos.x * -0.21 + world_pos.z * 0.38 + TIME * 0.45);
-	float w3 = sin((world_pos.x + world_pos.z) * 0.15 - TIME * 0.3);
-	vec3 wn = normalize(vec3(-(w1 * 0.7 + w3) * 0.045, 1.0, -(w2 * 0.7 - w3) * 0.045));
+	float w1 = sin(world_pos.x * 0.09 + world_pos.z * 0.04 + TIME * 0.45);
+	float w2 = sin(world_pos.x * -0.05 + world_pos.z * 0.08 + TIME * 0.3);
+	float w3 = sin((world_pos.x + world_pos.z) * 0.03 - TIME * 0.2);
+	vec3 wn = normalize(vec3(-(w1 * 0.6 + w3) * 0.02, 1.0, -(w2 * 0.6 - w3) * 0.02));
 
-	vec3 shallow = vec3(0.20, 0.55, 0.58);
-	vec3 deep = vec3(0.015, 0.09, 0.18);
-	vec3 water = mix(shallow, deep, smoothstep(0.25, 5.0, shown));
+	vec3 shallow = vec3(0.28, 0.62, 0.66);
+	vec3 deep = vec3(0.08, 0.28, 0.48);
+	vec3 water = mix(shallow, deep, smoothstep(0.2, 4.0, shown));
 
 	vec3 view_w = normalize(CAMERA_POSITION_WORLD - world_pos);
 	vec3 refl = reflect(-view_w, wn);
@@ -62,20 +69,20 @@ void fragment() {
 		vec2 ref_uv = SCREEN_UV + wn.xz * 0.04;
 		float toward_sky = step(SCREEN_UV.y, ref_uv.y);
 		vec3 mirror = texture(screen_tex, clamp(ref_uv, vec2(0.002), vec2(0.998))).rgb;
-		sky = mix(sky, mirror, 0.5 * toward_sky);
+		sky = mix(sky, mirror, 0.25 * toward_sky);
 	}
 	float fres = pow(1.0 - clamp(dot(view_w, wn), 0.0, 1.0), 3.2);
-	vec3 color = mix(water, sky, fres * 0.82 + 0.08);
+	vec3 color = mix(water, sky, fres * 0.8 + 0.28);
 
-	float shore = 1.0 - smoothstep(0.05, 0.85, shown);
+	float shore = 1.0 - smoothstep(0.05, 1.4, shown);
 	shore *= 1.0 - open_water;
-	float lace = 0.55 + 0.45 * sin(world_pos.x * 2.4 + world_pos.z * 1.7 + TIME * 1.2);
-	color = mix(color, vec3(0.86, 0.91, 0.9), shore * lace);
+	color = mix(color, vec3(0.78, 0.86, 0.84), shore * 0.7);
 
-	ALBEDO = color;
+	ALBEDO = color * 0.45;
+	EMISSION = color * 0.7;
 	ROUGHNESS = mix(0.04, 0.22, 1.0 - fres);
 	SPECULAR = 0.85;
 	METALLIC = 0.0;
-	ALPHA = mix(mix(0.42, 0.94, smoothstep(0.15, 2.2, shown)), 1.0, open_water);
+	ALPHA = mix(0.88, 1.0, smoothstep(0.2, 2.0, shown));
 	NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
 }

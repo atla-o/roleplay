@@ -18,9 +18,10 @@
       "spawns": [
         {"name": "Slope", "at": [2720.0, 2700.0], "yaw": 0.0},
         {"name": "Ridge", "at": [3198.0, 3088.0], "yaw": 3.4},
-        {"name": "Low ground", "at": [1600.0, 1600.0], "yaw": 0.6}
+        {"name": "Low ground", "at": [1600.0, 1600.0], "yaw": 0.6},
+        {"name": "Lake", "at": [3854.0, 3806.0], "yaw": 0.8}
       ],
-      "water": null,
+      "water": 74.0,
       "outer_m": 144.0,
       "forest": false,
       "lat": 75.3971,

@@ -22,7 +22,18 @@ var ground: StaticBody3D
 var shape: HeightMapShape3D
 var water: MeshInstance3D
 var apron: MeshInstance3D
+var patch: Soil.Patch
+var ring: Soil.Field
+var ring_mask: PackedByteArray
+var ring_origin := Vector2.ZERO
+var ring_far: MeshInstance3D
+var ring_near: MeshInstance3D
+var ring_near_at := Vector2(-1.0e9, -1.0e9)
+var fine_mesh: MeshInstance3D
+var fine_img: Image
+var fine_tex: ImageTexture
 const WINDOW := 97
+const COL_SPACING := 0.5
 
 func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
 	spec = next_spec
@@ -45,20 +56,53 @@ func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
 	mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/ground.gdshader")
 	var span := float(spec["cols"] - 1) * field.spacing
-	mat.set_shader_parameter("albedo_map", color_tex)
-	mat.set_shader_parameter("height_map", height_tex)
-	mat.set_shader_parameter("disturb_map", disturb_tex)
-	mat.set_shader_parameter("grain_map", grain_tex)
-	mat.set_shader_parameter("height_range", Vector2(float(spec["hmin"]), float(spec["hmax"])))
-	mat.set_shader_parameter("tile_m", Vector2(span, span))
-	mat.set_shader_parameter("spacing", field.spacing)
+	patch = Soil.Patch.new(field)
+	fine_img = Image.create(Soil.Patch.N, Soil.Patch.N, false, Image.FORMAT_L8)
+	fine_img.fill(Color(0, 0, 0))
+	fine_tex = ImageTexture.create_from_image(fine_img)
+	fine_mesh = MeshInstance3D.new()
+	fine_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(fine_mesh)
+	_bind_ground(span)
 	_build_collision()
 	_build_apron()
 	_build_water()
-	rebuild_around(Vector3(float(spec["spawn"][0]), 0.0, float(spec["spawn"][1])))
+	_load_ring()
+	var spawn := Vector3(float(spec["spawn"][0]), 0.0, float(spec["spawn"][1]))
+	ensure_patch(Vector2(spawn.x, spawn.z))
+	rebuild_around(spawn)
+	_build_ring(spawn)
 
 
 func sample(x: float, z: float) -> float:
+	if patch != null and patch.covers(x, z):
+		return patch.sample(x, z)
+	var span := _detail_span()
+	var in_detail := x >= 0.0 and z >= 0.0 and x <= span and z <= span
+	if in_detail:
+		var fine := _coarse_sample(x, z)
+		var edge := minf(minf(x, z), minf(span - x, span - z))
+		if ring != null and edge < 220.0:
+			return lerpf(_ring_at(x, z), fine, clampf(edge / 220.0, 0.0, 1.0))
+		return fine
+	if ring != null:
+		return _ring_at(x, z)
+	if spec.get("water") != null:
+		return float(spec["water"]) - 8.0
+	return _coarse_sample(clampf(x, 0.0, span), clampf(z, 0.0, span))
+
+
+func water_depth(x: float, z: float) -> float:
+	if spec.get("water") == null:
+		return -1.0
+	return float(spec["water"]) + 0.35 - sample(x, z)
+
+
+func _detail_span() -> float:
+	return float(field.cols - 1) * field.spacing
+
+
+func _coarse_sample(x: float, z: float) -> float:
 	var spacing := field.spacing
 	var c := clampf(x / spacing, 0.0, float(field.cols - 1))
 	var r := clampf(z / spacing, 0.0, float(field.rows - 1))
@@ -73,6 +117,127 @@ func sample(x: float, z: float) -> float:
 	var h01: float = field.heights[field.index(c0, r1)]
 	var h11: float = field.heights[field.index(c1, r1)]
 	return lerp(lerp(h00, h10, tx), lerp(h01, h11, tx), tz)
+
+
+func cut_blade(east: float, north: float, fx: float, fz: float, width: float, edge_y: float, repose: float) -> float:
+	ensure_patch(Vector2(east, north))
+	var moved: float = Soil.plane_blade(patch.field, east - patch.origin.x, north - patch.origin.y, fx, fz, width, edge_y, repose)
+	if moved > 0.0:
+		_flush_fine()
+	return moved
+
+
+func ensure_patch(focus: Vector2) -> void:
+	if patch == null:
+		return
+	if patch.recenter(focus):
+		fine_img.fill(Color(0, 0, 0))
+		fine_tex.update(fine_img)
+		_sync_patch_uniforms()
+		_rebuild_fine()
+		collision_dirty = true
+
+
+func _bind_ground(span: float) -> void:
+	mat.set_shader_parameter("sentinel", color_tex)
+	mat.set_shader_parameter("gravel_alb", load("res://assets/textures/sandy_gravel_02_Diffuse.jpg"))
+	mat.set_shader_parameter("gravel_nrm", load("res://assets/textures/sandy_gravel_02_nor_gl.jpg"))
+	mat.set_shader_parameter("rock_alb", load("res://assets/textures/rocky_terrain_Diffuse.jpg"))
+	mat.set_shader_parameter("rock_nrm", load("res://assets/textures/rocky_terrain_nor_gl.jpg"))
+	mat.set_shader_parameter("forest_alb", load("res://assets/textures/forest_floor_Diffuse.jpg"))
+	mat.set_shader_parameter("forest_nrm", load("res://assets/textures/forest_floor_nor_gl.jpg"))
+	mat.set_shader_parameter("leaves_alb", load("res://assets/textures/forest_leaves_03_Diffuse.jpg"))
+	mat.set_shader_parameter("shore_alb", load("res://assets/textures/coast_sand_01_Diffuse.jpg"))
+	mat.set_shader_parameter("mud_alb", load("res://assets/textures/brown_mud_Diffuse.jpg"))
+	mat.set_shader_parameter("mud_nrm", load("res://assets/textures/brown_mud_nor_gl.jpg"))
+	mat.set_shader_parameter("disturb_map", disturb_tex)
+	mat.set_shader_parameter("fine_cut", fine_tex)
+	mat.set_shader_parameter("height_range", Vector2(float(spec["hmin"]), float(spec["hmax"])))
+	mat.set_shader_parameter("tile_m", Vector2(span, span))
+	mat.set_shader_parameter("forest", 1.0 if bool(spec.get("forest", false)) else 0.0)
+	var water_y := -1000.0
+	if spec["water"] != null:
+		water_y = float(spec["water"])
+	mat.set_shader_parameter("water_y", water_y)
+	_sync_patch_uniforms()
+
+
+func _sync_patch_uniforms() -> void:
+	if patch == null or mat == null:
+		return
+	mat.set_shader_parameter("patch_origin", patch.origin)
+	mat.set_shader_parameter("patch_size", patch.size_m())
+	mat.set_shader_parameter("patch_live", 1.0 if patch.live else 0.0)
+
+
+func _flush_fine() -> void:
+	var n := Soil.Patch.N
+	var cell := Soil.Patch.CELL
+	for i in patch.field.changed:
+		var c := i % n
+		var r := int(i / n)
+		var py := n - 1 - r
+		fine_img.set_pixel(c, py, Color(1, 1, 1))
+		var x := patch.origin.x + float(c) * cell
+		var z := patch.origin.y + float(r) * cell
+		var cc := clampi(int(x / field.spacing), 0, field.cols - 1)
+		var rr := clampi(int(z / field.spacing), 0, field.rows - 1)
+		_paint_disturb(cc, rr)
+	patch.field.changed = PackedInt32Array()
+	fine_tex.update(fine_img)
+	disturb_tex.update(disturb_img)
+	_rebuild_fine()
+	collision_dirty = true
+
+
+func _rebuild_fine() -> void:
+	if patch == null or not patch.live:
+		return
+	var n := Soil.Patch.N
+	var cell := Soil.Patch.CELL
+	var positions := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	var span := float(field.cols - 1) * field.spacing
+	var stride := n
+	positions.resize(n * n)
+	uvs.resize(n * n)
+	for r in n:
+		for c in n:
+			var x := patch.origin.x + float(c) * cell
+			var z := patch.origin.y + float(r) * cell
+			var idx := r * n + c
+			positions[idx] = Vector3(x, patch.field.heights[idx], z)
+			uvs[idx] = Vector2(clampf(x / span, 0.0, 1.0), clampf(z / span, 0.0, 1.0))
+	var quads := (n - 1) * (n - 1)
+	indices.resize(quads * 6)
+	var w := 0
+	for r in n - 1:
+		for c in n - 1:
+			var a := r * n + c
+			var b := a + 1
+			var d := a + n
+			var e := d + 1
+			indices[w] = a
+			indices[w + 1] = b
+			indices[w + 2] = d
+			indices[w + 3] = b
+			indices[w + 4] = e
+			indices[w + 5] = d
+			w += 6
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = positions
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var tool := SurfaceTool.new()
+	tool.create_from(mesh, 0)
+	tool.generate_normals()
+	mesh = tool.commit()
+	mesh.surface_set_material(0, mat)
+	fine_mesh.mesh = mesh
 
 
 func refresh_edits() -> void:
@@ -99,6 +264,8 @@ func refresh_edits() -> void:
 func _process(_dt: float) -> void:
 	_stream(focus)
 	_update_collision(focus)
+	if ring != null and ring_near_at.distance_to(Vector2(focus.x, focus.z)) > 700.0:
+		_build_ring_near(focus)
 
 
 func _clear() -> void:
@@ -111,6 +278,17 @@ func _clear() -> void:
 	if water:
 		water.queue_free()
 		water = null
+	if fine_mesh:
+		fine_mesh.queue_free()
+		fine_mesh = null
+	if ring_far:
+		ring_far.queue_free()
+		ring_far = null
+	if ring_near:
+		ring_near.queue_free()
+		ring_near = null
+	ring = null
+	ring_mask = PackedByteArray()
 	if apron:
 		apron.queue_free()
 		apron = null
@@ -178,10 +356,12 @@ func _build_collision() -> void:
 func _update_collision(focus_pos: Vector3) -> void:
 	if shape == null:
 		return
-	var spacing := field.spacing
-	var c0 := clampi(int(focus_pos.x / spacing) - WINDOW / 2, 0, field.cols - WINDOW)
-	var r0 := clampi(int(focus_pos.z / spacing) - WINDOW / 2, 0, field.rows - WINDOW)
-	var origin := Vector2i(c0, r0)
+	var span := float(WINDOW - 1) * COL_SPACING
+	var ox := clampf(focus_pos.x - span * 0.5, 0.0, float(field.cols - 1) * field.spacing - span)
+	var oz := clampf(focus_pos.z - span * 0.5, 0.0, float(field.rows - 1) * field.spacing - span)
+	ox = snappedf(ox, COL_SPACING)
+	oz = snappedf(oz, COL_SPACING)
+	var origin := Vector2i(int(ox * 10.0), int(oz * 10.0))
 	if origin == window_origin and not collision_dirty:
 		return
 	window_origin = origin
@@ -189,14 +369,17 @@ func _update_collision(focus_pos: Vector3) -> void:
 	var data := PackedFloat32Array()
 	data.resize(WINDOW * WINDOW)
 	for j in WINDOW:
-		var row := (r0 + j) * field.cols
+		var z := oz + float(j) * COL_SPACING
 		for i in WINDOW:
-			data[j * WINDOW + i] = field.heights[row + c0 + i]
+			var x := ox + float(i) * COL_SPACING
+			data[j * WINDOW + i] = sample(x, z)
 	shape.map_width = WINDOW
 	shape.map_depth = WINDOW
 	shape.map_data = data
-	var half := float(WINDOW - 1) * spacing * 0.5
-	ground.position = Vector3(float(c0) * spacing + half, 0.0, float(r0) * spacing + half)
+	var col := ground.get_child(0) as CollisionShape3D
+	if col:
+		col.scale = Vector3(COL_SPACING, 1.0, COL_SPACING)
+	ground.position = Vector3(ox + span * 0.5, 0.0, oz + span * 0.5)
 
 
 func _build_water() -> void:
@@ -205,13 +388,14 @@ func _build_water() -> void:
 	var span := float(field.cols - 1) * field.spacing
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var y := float(spec["water"]) + 0.55
-	# North is +Z. The reservoir continues past the north edge of the measured square.
+	var y := float(spec["water"]) + 0.35
+	# Wide enough that the horizon is water from the island's high ground.
+	var reach := 90000.0
 	var pts := [
-		Vector3(0.0, y, -20.0),
-		Vector3(span, y, -20.0),
-		Vector3(0.0, y, span + 2400.0),
-		Vector3(span, y, span + 2400.0),
+		Vector3(-reach, y, -reach),
+		Vector3(span + reach, y, -reach),
+		Vector3(-reach, y, span + reach),
+		Vector3(span + reach, y, span + reach),
 	]
 	for p in pts:
 		st.set_uv(Vector2(p.x / span, p.z / span))
@@ -232,6 +416,7 @@ func _build_water() -> void:
 	wmat.set_shader_parameter("water_y", y)
 	wmat.set_shader_parameter("tile_m", Vector2(span, span))
 	wmat.set_shader_parameter("tile_origin", Vector2.ZERO)
+	wmat.set_shader_parameter("wave_nrm", load("res://assets/textures/brown_mud_nor_gl.jpg"))
 	water.material_override = wmat
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(water)
@@ -308,6 +493,8 @@ func _stream(pos: Vector3) -> void:
 			if x * CHUNK >= field.cols or y * CHUNK >= field.rows:
 				continue
 			var key := Vector2i(x, y)
+			if _inside_patch(_chunk_center(key)):
+				continue
 			keep[key] = true
 			var lod := _lod_for(_chunk_center(key))
 			if built_lod.get(key, -1) != lod or dirty.has(key):
@@ -320,6 +507,13 @@ func _stream(pos: Vector3) -> void:
 		chunks[key].queue_free()
 		chunks.erase(key)
 		built_lod.erase(key)
+
+
+func _inside_patch(center: Vector3) -> bool:
+	if patch == null or not patch.live:
+		return false
+	var inset := 6.0
+	return center.x > patch.origin.x + inset and center.z > patch.origin.y + inset and center.x < patch.origin.x + patch.size_m() - inset and center.z < patch.origin.y + patch.size_m() - inset
 
 
 func _lod_for(center: Vector3) -> int:
@@ -362,7 +556,21 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 			return int(lookup[id])
 		var idx := positions.size()
 		lookup[id] = idx
-		positions.append(Vector3(float(c) * spacing, field.height_at(c, r) + drop, float(r) * spacing))
+		var px := float(c) * spacing
+		var pz := float(r) * spacing
+		var minx := float(c0) * spacing
+		var maxx := float(c1) * spacing
+		var minz := float(r0) * spacing
+		var maxz := float(r1) * spacing
+		if absf(px - minx) < 0.01:
+			px -= 0.7
+		elif absf(px - maxx) < 0.01:
+			px += 0.7
+		if absf(pz - minz) < 0.01:
+			pz -= 0.7
+		elif absf(pz - maxz) < 0.01:
+			pz += 0.7
+		positions.append(Vector3(px, field.height_at(c, r) + drop, pz))
 		uvs.append(Vector2(float(c) / cols_f, float(r) / rows_f))
 		return idx
 	for j in range(rs.size() - 1):
@@ -435,3 +643,140 @@ func _skirt(add: Callable, indices: PackedInt32Array, line: PackedInt32Array, fi
 		var d: int = add.call(c0, r0, -10.0)
 		var e: int = add.call(c1, r1, -10.0)
 		indices.append_array(PackedInt32Array([a, b, d, b, e, d]))
+
+
+func _load_ring() -> void:
+	if not spec.has("ring"):
+		return
+	var info: Dictionary = spec["ring"]
+	ring = Soil.Field.new()
+	ring.cols = int(info["cols"])
+	ring.rows = int(info["rows"])
+	ring.spacing = float(info["spacing"])
+	ring.heights = FileAccess.get_file_as_bytes("res://data/%s" % str(info["heights"])).to_float32_array()
+	ring.disturb = PackedByteArray()
+	ring.changed = PackedInt32Array()
+	ring_mask = FileAccess.get_file_as_bytes("res://data/%s" % str(info["mask"]))
+	ring_origin = Vector2(float(info["origin"][0]), float(info["origin"][1]))
+	print("ring ", ring.cols, "x", ring.rows, " from ", ring_origin)
+
+
+func _ring_at(x: float, z: float) -> float:
+	var water := float(spec["water"]) if spec.get("water") != null else 0.0
+	var cf := (x - ring_origin.x) / ring.spacing - 0.5
+	var rf := (z - ring_origin.y) / ring.spacing - 0.5
+	if cf < 0.0 or rf < 0.0 or cf > float(ring.cols - 1) or rf > float(ring.rows - 1):
+		return water - 12.0
+	var c0 := int(floor(cf))
+	var r0 := int(floor(rf))
+	var c1 := mini(c0 + 1, ring.cols - 1)
+	var r1 := mini(r0 + 1, ring.rows - 1)
+	if ring_mask[r0 * ring.cols + c0] == 0 and ring_mask[r1 * ring.cols + c1] == 0:
+		return water - 12.0
+	var tx := cf - float(c0)
+	var tz := rf - float(r0)
+	var h00: float = ring.heights[r0 * ring.cols + c0]
+	var h10: float = ring.heights[r0 * ring.cols + c1]
+	var h01: float = ring.heights[r1 * ring.cols + c0]
+	var h11: float = ring.heights[r1 * ring.cols + c1]
+	return lerpf(lerpf(h00, h10, tx), lerpf(h01, h11, tx), tz)
+
+
+func _build_ring(focus_pos: Vector3) -> void:
+	if ring == null:
+		return
+	focus = focus_pos
+	_build_ring_mesh(8, 0.0, 1.0e9, "far")
+	_build_ring_near(focus_pos)
+
+
+func _build_ring_near(focus_pos: Vector3) -> void:
+	ring_near_at = Vector2(focus_pos.x, focus_pos.z)
+	focus = focus_pos
+	_build_ring_mesh(1, 0.0, 5200.0, "near")
+
+
+func _build_ring_mesh(stride: int, min_dist: float, max_dist: float, which: String) -> void:
+	var positions := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var indices := PackedInt32Array()
+	var span := _detail_span()
+	var spacing := ring.spacing
+	var cols := ring.cols
+	var rows := ring.rows
+	var lookup := {}
+	var add := func(c: int, r: int) -> int:
+		var key := r * cols + c
+		if lookup.has(key):
+			return int(lookup[key])
+		var idx := positions.size()
+		lookup[key] = idx
+		var x := ring_origin.x + (float(c) + 0.5) * spacing
+		var z := ring_origin.y + (float(r) + 0.5) * spacing
+		var h: float = ring.heights[key]
+		if c < 0 or r < 0 or c >= cols or r >= rows or ring_mask[key] == 0:
+			h = float(spec["water"]) - 2.0
+		positions.append(Vector3(x, h, z))
+		uvs.append(Vector2(x / span, z / span))
+		return idx
+	var r_start := 0
+	var r_end := rows - 1
+	var c_start := 0
+	var c_end := cols - 1
+	if max_dist < 1.0e8:
+		var cf := (focus.x - ring_origin.x) / spacing
+		var rf := (focus.z - ring_origin.y) / spacing
+		var rad := int(max_dist / spacing) + stride * 2
+		c_start = clampi(int(cf) - rad, 0, cols - 2)
+		c_end = clampi(int(cf) + rad, 1, cols - 1)
+		r_start = clampi(int(rf) - rad, 0, rows - 2)
+		r_end = clampi(int(rf) + rad, 1, rows - 1)
+	var r := r_start
+	while r < r_end:
+		var r2 := mini(r + stride, rows - 1)
+		var c := c_start
+		while c < c_end:
+			var c2 := mini(c + stride, cols - 1)
+			var covered := ring_mask[r * cols + c] > 0 or ring_mask[r * cols + c2] > 0 or ring_mask[r2 * cols + c] > 0 or ring_mask[r2 * cols + c2] > 0
+			if covered:
+				var mx := ring_origin.x + (float(c + c2) * 0.5 + 0.5) * spacing
+				var mz := ring_origin.y + (float(r + r2) * 0.5 + 0.5) * spacing
+				var dist := Vector2(mx - focus.x, mz - focus.z).length()
+				var inside := mx > 80.0 and mz > 80.0 and mx < span - 80.0 and mz < span - 80.0
+				if dist >= min_dist and dist <= max_dist and not inside:
+					var ia: int = add.call(c, r)
+					var ib: int = add.call(c2, r)
+					var id: int = add.call(c, r2)
+					var ie: int = add.call(c2, r2)
+					indices.append_array(PackedInt32Array([ia, ib, id, ib, ie, id]))
+			c += stride
+		r += stride
+	if indices.is_empty():
+		return
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = positions
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var tool := SurfaceTool.new()
+	tool.create_from(mesh, 0)
+	tool.generate_normals()
+	mesh = tool.commit()
+	mesh.surface_set_material(0, mat)
+	var node: MeshInstance3D
+	if which == "far":
+		if ring_far == null:
+			ring_far = MeshInstance3D.new()
+			ring_far.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(ring_far)
+		node = ring_far
+	else:
+		if ring_near == null:
+			ring_near = MeshInstance3D.new()
+			ring_near.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			add_child(ring_near)
+		node = ring_near
+	node.mesh = mesh
+	print("ring ", which, " tris ", indices.size() / 3)

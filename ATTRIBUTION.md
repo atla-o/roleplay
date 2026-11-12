@@ -50,7 +50,7 @@ The Godot project uses the measured 2 m posts, not the older 120 m island mosaic
 
 Polar Desert Basin is ArcticDEM v4.1 at native 2 m, southwest corner EPSG:3413 X −1,116,740 m, Y −1,136,008 m, 2000 by 2000 posts. Elevations run from 66.60 m to 279.48 m. The machine starts near 2720 m east and 2700 m north of that corner, on a measured slope where the Sentinel-2 picture has contrast.
 
-Île René-Levasseur is the western shore in NRCan HRDEM project `Lac_Pletipi_2024`, tile `dtm_1m_utm19_w_0_169`, averaged from 1 m to 2 m. Southwest corner UTM zone 19, 491800 E, 5696000 N. Elevations run from 348.29 m to 616.30 m. Posts the lidar left empty are filled with 348.59 m, the median of the measured water surface in this window. The water plane sits 0.55 m above that. Licence: Open Government Licence – Canada.
+Île René-Levasseur's near ground is the western shore in NRCan HRDEM project `Lac_Pletipi_2024`, tile `dtm_1m_utm19_w_0_169`, averaged from 1 m to 2 m. Southwest corner UTM zone 19, 491800 E, 5696000 N. Elevations on that square run from 348.29 m to 616.30 m. Posts the lidar left empty are filled with 348.59 m, the measured water surface. The playable island continues past that square at 40 m: HRDEM mosaic `9_4-mosaic-1m-dtm` where the lidar exists (about 98 percent of the window), otherwise NRCan MRDEM-30, whose inputs include Copernicus GLO-30. Both are Open Government Licence – Canada. The mesh is the land connected to the island above the reservoir. Beyond that shoreline the view is water, not a cut square and not the crater rim outside the ring. ArcticDEM does not cover 51°N.
 
 Color on both squares is Sentinel-2 cloudless from EOX (CC BY 4.0), containing modified Copernicus Sentinel data. The island mosaic is the 2020 cloudless file multiplied by 3 so boreal canopy is not stored as a near-black reflectance value. The basin mosaic is the 2021 file, unchanged.
 
@@ -58,7 +58,9 @@ An apron around each square eases from the measured edge posts toward one sample
 
 Trees and shrubs are meshes built in this repository and instanced where the Sentinel-2 picture is green and the ground is above the reservoir. They are not a stem survey.
 
-The dozer, the human, and Titan are meshes built in this repository. No third-party model is loaded. The dozer is about 3.5 m across the tracks and 4.4 m across the blade.
+The bulldozer is "Tracked bulldozer with raising and angling blade" from 3DAssets.dev, CC0 1.0, https://3dassets.dev/assets/demolition-and-site-clearance-demolition-and-site-clea-b80ffe3a . The blade clip raises and lowers. The human is Quaternius Ultimate Modular Characters, the Worker, CC0, with Idle, Walk and Run. Trees, grass, bush and the boulder are Quaternius Stylized Nature Megakit, CC0 (pine_1, pine_3, grass_common_short, grass_wispy_tall, bush_common, rock_medium_1). Far trees are a generated stand-in, not a scanned stem.
+
+Ground detail textures are Poly Haven CC0, 1K: sandy_gravel_02, rocky_terrain, forest_floor, forest_leaves_03, coast_sand_01, brown_mud. https://polyhaven.com . The API asks for a Poly Haven credit, which this line is.
 
 Soil moved by the blade stays in the field. On the basin the pile may not stand steeper than 35°. On the island the limit is 32°. Those angles are the sandy-gravel and loose-till ranges in French, The Periglacial Environment (2007), and Das, Principles of Geotechnical Engineering. They are not a lab sample from either square. Bulk density is not applied as a force in this build; the blade slows only through the slope and a simple drag term.
 

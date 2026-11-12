@@ -15,6 +15,11 @@
         2720.0,
         2700.0
       ],
+      "spawns": [
+        {"name": "Slope", "at": [2720.0, 2700.0], "yaw": 0.0},
+        {"name": "Ridge", "at": [3198.0, 3088.0], "yaw": 3.4},
+        {"name": "Low ground", "at": [1600.0, 1600.0], "yaw": 0.6}
+      ],
       "water": null,
       "outer_m": 144.0,
       "forest": false,
@@ -33,9 +38,22 @@
       "hmax": 616.302490234375,
       "repose": 32.0,
       "spawn": [
-        1999.0,
-        1999.0
+        2200.0,
+        1600.0
       ],
+      "spawns": [
+        {"name": "Forest", "at": [2200.0, 1600.0], "yaw": 0.0},
+        {"name": "Shore", "at": [2000.0, 2320.0], "yaw": 0.0},
+        {"name": "Heights", "at": [3600.0, 2000.0], "yaw": -1.57}
+      ],
+      "ring": {
+        "heights": "ile_ring.f32",
+        "mask": "ile_ring_mask.u8",
+        "cols": 1906,
+        "rows": 2094,
+        "spacing": 40.0,
+        "origin": [-9360.0, -46160.0]
+      },
       "water": 348.59,
       "outer_m": 348.0,
       "forest": true,

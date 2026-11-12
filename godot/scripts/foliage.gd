@@ -1,60 +1,108 @@
 class_name Foliage
 extends Node3D
 
-var tree_mesh: ArrayMesh
-var shrub_mesh: ArrayMesh
-var mat: ShaderMaterial
+var pines: Array = []
+var grasses: Array = []
+var bushes: Array = []
+var boulders: Array = []
 
 func _ready() -> void:
-	mat = ShaderMaterial.new()
-	mat.shader = load("res://shaders/foliage.gdshader")
-	tree_mesh = _conifer()
-	shrub_mesh = _shrub()
+	pines = _meshes("res://assets/models/pine_a.glb") + _meshes("res://assets/models/pine_b.glb")
+	grasses = _meshes("res://assets/models/grass_short.glb") + _meshes("res://assets/models/grass_tall.glb")
+	bushes = _meshes("res://assets/models/bush.glb")
+	boulders = _meshes("res://assets/models/boulder.glb")
 
 
 func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 	for child in get_children():
 		child.queue_free()
-	if not bool(terrain.spec.get("forest", false)):
-		return
 	var img := albedo.get_image()
 	if img == null:
 		return
 	var span := float(terrain.field.cols - 1) * terrain.field.spacing
 	var water := float(terrain.spec["water"]) if terrain.spec["water"] != null else -9999.0
-	var trees: Array[Transform3D] = []
-	var shrubs: Array[Transform3D] = []
+	var forest := bool(terrain.spec.get("forest", false))
 	var spawn := Vector2(float(terrain.spec["spawn"][0]), float(terrain.spec["spawn"][1]))
-	var step := 6
+	var near: Array[Transform3D] = []
+	var far: Array[Transform3D] = []
+	var grass: Array[Transform3D] = []
+	var shrub: Array[Transform3D] = []
+	var rocks: Array[Transform3D] = []
+	var step := 8
 	for y in range(0, img.get_height(), step):
 		for x in range(0, img.get_width(), step):
 			var px := img.get_pixel(x, y)
-			if px.g < px.r + 0.03 or px.g < 0.1:
-				continue
-			var roll := _hash(x, y)
-			if roll < 0.28:
-				continue
 			var east := float(x) / float(img.get_width() - 1) * span
 			var north := (1.0 - float(y) / float(img.get_height() - 1)) * span
-			east += (_hash(x + 3, y) - 0.5) * 18.0
-			north += (_hash(x, y + 5) - 0.5) * 18.0
 			var h := terrain.sample(east, north)
-			if h < water + 2.0:
+			if h < water + 1.2:
 				continue
-			if Vector2(east, north).distance_to(spawn) < 28.0:
+			var roll := _hash(x, y)
+			var green := px.g > px.r + 0.025 and px.g > 0.08
+			var dist := Vector2(east, north).distance_to(spawn)
+			if dist < 18.0:
 				continue
-			var s := 0.75 + _hash(x + 9, y + 2) * 0.7
-			var xf := Transform3D(Basis.IDENTITY.scaled(Vector3(s, s, s)).rotated(Vector3.UP, roll * TAU), Vector3(east, h, north))
-			if px.g > px.r + 0.08 and trees.size() < 4200:
-				trees.append(xf)
-			elif shrubs.size() < 1800:
-				shrubs.append(xf.scaled(Vector3(1.4, 0.7, 1.4)))
-	_spawn(tree_mesh, trees, OS.has_feature("web") == false)
-	_spawn(shrub_mesh, shrubs, false)
+			var slope := _slope(terrain, east, north)
+			if roll > 0.72 and rocks.size() < 220 and (slope > 0.18 or not forest):
+				var rs := 0.7 + _hash(x + 4, y) * (2.4 if slope > 0.3 else 1.1)
+				rocks.append(_xf(east, h, north, roll * TAU, rs))
+			if not forest or not green:
+				continue
+			if roll > 0.42 and near.size() < 280 and dist < 520.0:
+				var s := 0.75 + _hash(x + 2, y + 1) * 0.7
+				near.append(_xf(east + (_hash(x, y + 3) - 0.5) * 6.0, h, north, roll * TAU, s))
+			elif far.size() < 1400:
+				var s2 := 0.9 + _hash(x + 6, y) * 0.8
+				far.append(_xf(east, h, north, roll * TAU, s2))
+			if _hash(x + 8, y + 8) > 0.55 and grass.size() < 900:
+				grass.append(_xf(east, h, north, roll * TAU, 0.8 + roll * 0.7))
+			if _hash(x + 1, y + 9) > 0.78 and shrub.size() < 400:
+				shrub.append(_xf(east, h, north, roll * 3.0, 0.7 + roll * 0.5))
+	for mesh in pines:
+		_spawn(mesh, near, true, 0.0, 260.0)
+	_spawn(_impostor(), far, false, 180.0, 1400.0)
+	for mesh in grasses:
+		_spawn(mesh, grass, false, 0.0, 90.0)
+	for mesh in bushes:
+		_spawn(mesh, shrub, false, 0.0, 160.0)
+	for mesh in boulders:
+		_spawn(mesh, rocks, true, 0.0, 500.0)
 
 
-func _spawn(mesh: ArrayMesh, items: Array[Transform3D], shadows: bool) -> void:
-	if items.is_empty():
+func _xf(x: float, y: float, z: float, yaw: float, scale: float) -> Transform3D:
+	var basis := Basis(Vector3.UP, yaw).scaled(Vector3(scale, scale, scale))
+	return Transform3D(basis, Vector3(x, y, z))
+
+
+func _slope(terrain: TerrainWorld, x: float, z: float) -> float:
+	var h := terrain.sample(x, z)
+	var hx := terrain.sample(x + 4.0, z) - h
+	var hz := terrain.sample(x, z + 4.0) - h
+	return clampf(Vector2(hx, hz).length() / 4.0, 0.0, 1.0)
+
+
+func _meshes(path: String) -> Array:
+	var packed := load(path) as PackedScene
+	if packed == null:
+		return []
+	var root := packed.instantiate()
+	var found: Array = []
+	_collect(root, found)
+	root.free()
+	return found
+
+
+func _collect(node: Node, found: Array) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		if mi.mesh != null:
+			found.append(mi.mesh)
+	for child in node.get_children():
+		_collect(child, found)
+
+
+func _spawn(mesh: Mesh, items: Array[Transform3D], shadows: bool, begin: float, end: float) -> void:
+	if mesh == null or items.is_empty():
 		return
 	var multi := MultiMesh.new()
 	multi.transform_format = MultiMesh.TRANSFORM_3D
@@ -64,49 +112,31 @@ func _spawn(mesh: ArrayMesh, items: Array[Transform3D], shadows: bool) -> void:
 		multi.set_instance_transform(i, items[i])
 	var node := MultiMeshInstance3D.new()
 	node.multimesh = multi
-	node.material_override = mat
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadows else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if end > 0.0:
+		node.visibility_range_begin = begin
+		node.visibility_range_end = end
+		node.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	add_child(node)
 
 
-func _conifer() -> ArrayMesh:
+func _impostor() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_frustum(st, 0.0, 3.2, 0.22, 0.14, Color(0.32, 0.18, 0.1), 7)
-	_cards(st, 2.2, 2.6, 2.4, Color(0.12, 0.32, 0.13))
-	_cards(st, 4.2, 2.4, 1.9, Color(0.16, 0.4, 0.16))
-	_cards(st, 6.2, 2.2, 1.3, Color(0.28, 0.5, 0.2))
-	_cards(st, 8.0, 1.6, 0.7, Color(0.45, 0.62, 0.28))
+	_cone(st, 0.0, 1.6, 0.16, 0.1, Color(0.28, 0.16, 0.08))
+	_cone(st, 1.3, 3.4, 1.15, 0.72, Color(0.1, 0.24, 0.1))
+	_cone(st, 2.8, 5.1, 0.85, 0.42, Color(0.14, 0.3, 0.12))
+	_cone(st, 4.5, 6.8, 0.48, 0.04, Color(0.22, 0.38, 0.16))
 	st.generate_normals()
-	return st.commit()
+	var mesh := st.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/foliage.gdshader")
+	mesh.surface_set_material(0, mat)
+	return mesh
 
 
-func _shrub() -> ArrayMesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_frustum(st, 0.0, 0.7, 0.7, 0.45, Color(0.24, 0.38, 0.16), 7)
-	_frustum(st, 0.45, 1.15, 0.4, 0.08, Color(0.36, 0.5, 0.2), 6)
-	st.generate_normals()
-	return st.commit()
-
-
-func _cards(st: SurfaceTool, y: float, height: float, width: float, color: Color) -> void:
-	var hw := width * 0.5
-	var y0 := y
-	var y1 := y + height
-	for angle in [0.0, PI * 0.5, PI * 0.25]:
-		var c := cos(angle)
-		var s := sin(angle)
-		var a := Vector3(-hw * c, y0, -hw * s)
-		var b := Vector3(hw * c, y0, hw * s)
-		var d := Vector3(-hw * c, y1, -hw * s)
-		var e := Vector3(hw * c, y1, hw * s)
-		for p in [a, d, b, b, d, e]:
-			st.set_color(color)
-			st.add_vertex(p)
-
-
-func _frustum(st: SurfaceTool, y0: float, y1: float, r0: float, r1: float, color: Color, sides: int) -> void:
+func _cone(st: SurfaceTool, y0: float, y1: float, r0: float, r1: float, color: Color) -> void:
+	var sides := 6
 	for i in sides:
 		var a0 := TAU * float(i) / float(sides)
 		var a1 := TAU * float(i + 1) / float(sides)

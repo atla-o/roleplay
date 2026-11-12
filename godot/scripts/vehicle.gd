@@ -1,163 +1,218 @@
 class_name TrackedVehicle
-extends Node3D
+extends RigidBody3D
 
 var terrain: TerrainWorld
-var yaw := 0.0
 var throttle := 0.0
 var steer := 0.0
-var blade := 0.18
-var speed := 0.0
+var blade_angle := 0.28
 var travel := 0.0
-var mass_kg := 26000.0
-var engine_n := 90000.0
-var visual: Node3D
-var blade_pivot: Node3D
+var model: Node3D
+var blade_anim: AnimationPlayer
+var track_mats: Array[StandardMaterial3D] = []
+var track_scroll := 0.0
+var dust: GPUParticles3D
+var wheels: Array[Vector3] = []
 
 func _ready() -> void:
-	var body := StaticBody3D.new()
-	body.collision_layer = 2
-	body.collision_mask = 0
+	mass = 24000.0
+	gravity_scale = 1.0
+	can_sleep = false
+	continuous_cd = false
+	linear_damp = 0.08
+	angular_damp = 1.4
+	center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
+	center_of_mass = Vector3(0.0, 0.55, -0.1)
+	collision_layer = 2
+	collision_mask = 0
 	var shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(3.6, 1.7, 6.2)
+	box.size = Vector3(2.6, 1.5, 4.4)
 	shape.shape = box
-	shape.position = Vector3(0.0, 1.15, 0.2)
-	body.add_child(shape)
-	add_child(body)
-	_build_visual()
+	shape.position = Vector3(0.0, 1.15, 0.15)
+	add_child(shape)
+	for side in [-1.0, 1.0]:
+		for z in [-1.55, -0.75, 0.05, 0.85, 1.65]:
+			wheels.append(Vector3(side * 0.95, 0.45, z))
+	_load_model()
+	_make_dust()
 
 
 func forward() -> Vector3:
-	return Vector3(sin(yaw), 0.0, cos(yaw))
+	var f := global_transform.basis.z
+	f.y = 0.0
+	if f.length() < 0.001:
+		return Vector3(0.0, 0.0, 1.0)
+	return f.normalized()
 
 
 func _physics_process(dt: float) -> void:
-	if terrain == null:
+	if terrain == null or freeze:
+		_pose_blade()
 		return
 	dt = minf(dt, 0.05)
-	var fwd := forward()
-	var right := Vector3(fwd.z, 0.0, -fwd.x)
-	var origin := global_position
-	var wheels := [
-		origin + right * 1.35 + fwd * 2.1,
-		origin - right * 1.35 + fwd * 2.1,
-		origin + right * 1.35 - fwd * 2.1,
-		origin - right * 1.35 - fwd * 2.1,
-	]
-	var heights: Array[float] = []
-	var count := 0
-	var sum_h := 0.0
+	var space := get_world_3d().direct_space_state
+	var xf := global_transform
+	var hits := 0
 	for wheel in wheels:
-		var h := terrain.sample(wheel.x, wheel.z)
-		heights.append(h)
-		sum_h += h
-		count += 1
-	var ground := sum_h / float(count)
-	var front := (heights[0] + heights[1]) * 0.5
-	var back := (heights[2] + heights[3]) * 0.5
-	var left := (heights[1] + heights[3]) * 0.5
-	var right_h := (heights[0] + heights[2]) * 0.5
-	var pitch := atan2(back - front, 4.2)
-	var roll := atan2(left - right_h, 2.7)
-	var slope := sin(pitch)
-	var accel := throttle * engine_n / mass_kg
-	accel -= slope * 9.8
-	accel -= speed * 0.35
+		var from: Vector3 = xf * (wheel + Vector3(0.0, 0.35, 0.0))
+		var to: Vector3 = from + Vector3.DOWN * 1.5
+		var query := PhysicsRayQueryParameters3D.create(from, to, 1)
+		query.exclude = [get_rid()]
+		var hit := space.intersect_ray(query)
+		if hit.is_empty():
+			continue
+		hits += 1
+		var dist: float = from.distance_to(hit.position)
+		var compression := 0.58 - dist
+		if compression > 0.0:
+			var vn := linear_velocity.dot(Vector3.UP)
+			var force := Vector3.UP * (compression * 155000.0 - vn * 14000.0)
+			apply_force(force, hit.position - global_position)
+	if hits == 0:
+		var ground := terrain.sample(global_position.x, global_position.z)
+		if global_position.y < ground - 1.2:
+			var t := global_transform
+			t.origin.y = ground + 0.7
+			global_transform = t
+			linear_velocity.y = 0.0
+	var fwd := forward()
+	var right := global_transform.basis.x
+	right.y = 0.0
+	if right.length() > 0.001:
+		right = right.normalized()
+	var speed := linear_velocity.dot(fwd)
+	var grade := clampf(fwd.y, -0.7, 0.7)
+	# basis.z.y is the pitch of the forward vector before we flattened it.
+	var pitched := global_transform.basis.z
+	grade = pitched.y
+	var traction := clampf(1.0 - maxf(grade, 0.0) * 1.35 - maxf(-grade - 0.45, 0.0) * 0.4, 0.18, 1.0)
+	var drive := clampf(throttle, -1.0, 1.0) * 82000.0 * traction
+	# Differential: steering pushes one track harder than the other.
+	var left_bias := 1.0 - steer * 0.85
+	var right_bias := 1.0 + steer * 0.85
+	apply_force(fwd * drive * left_bias, xf.basis.x * -0.9)
+	apply_force(fwd * drive * right_bias, xf.basis.x * 0.9)
+	var lat := linear_velocity.dot(right)
+	apply_central_force(-right * lat * mass * 5.5)
 	if absf(throttle) < 0.05:
-		accel -= speed * 1.6
-	speed = clampf(speed + accel * dt, -3.2, 4.2)
-	if absf(speed) < 0.05 and absf(throttle) < 0.05:
-		speed = 0.0
-	yaw += steer * clampf(absf(speed), 0.4, 2.2) * 0.55 * dt
-	fwd = forward()
-	var step := fwd * speed * dt
-	global_position += step
-	var ride := ground + 0.42
-	global_position.y = lerp(global_position.y, ride, 1.0 - exp(-dt * 8.0))
-	var n := Vector3(sin(roll), cos(roll) * cos(pitch), sin(pitch)).normalized()
-	var f := (fwd - n * fwd.dot(n)).normalized()
-	var r := n.cross(f).normalized()
-	f = r.cross(n).normalized()
-	global_transform.basis = Basis(r, n, f)
-	yaw = atan2(f.x, f.z)
-	if blade_pivot:
-		blade_pivot.rotation.x = -blade
-	if blade < 0.02 and absf(speed) > 0.35:
+		apply_central_force(-fwd * speed * mass * 1.8)
+	if absf(speed) > 4.2:
+		linear_velocity -= fwd * (speed - signf(speed) * 4.2) * 0.35
+	_pose_blade()
+	_scroll_tracks(speed, dt)
+	if blade_angle < -0.08 and absf(speed) > 0.25:
 		travel += absf(speed) * dt
-		if travel > 0.55:
+		if travel > 0.22:
 			travel = 0.0
-			var edge := ground + sin(blade) * 1.25
-			var at := global_position + f * 3.15
-			Soil.plane_blade(terrain.field, at.x, at.z, f.x, f.z, 3.6, edge, float(terrain.spec["repose"]))
-			terrain.refresh_edits()
+			var at := global_position + fwd * 3.15
+			var shoulder := global_position + right * 2.4
+			var edge := terrain.sample(shoulder.x, shoulder.z) + blade_angle * 0.9
+			terrain.cut_blade(at.x, at.z, fwd.x, fwd.z, 3.5, edge, float(terrain.spec["repose"]))
+		if dust:
+			dust.emitting = true
+	elif dust:
+		dust.emitting = false
+	_hold_shore()
 
 
-func _build_visual() -> void:
-	visual = Node3D.new()
-	add_child(visual)
-	var paint := _mat(Color(0.62, 0.28, 0.07), 0.52, 0.08)
-	var dark := _mat(Color(0.1, 0.1, 0.11), 0.78, 0.2)
-	var metal := _mat(Color(0.62, 0.64, 0.68), 0.32, 0.86)
-	var rubber := _mat(Color(0.07, 0.07, 0.08), 0.92, 0.0)
-	var glass := StandardMaterial3D.new()
-	glass.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	glass.albedo_color = Color(0.55, 0.72, 0.82, 0.38)
-	glass.roughness = 0.08
-	glass.metallic = 0.15
-	for side in [-1.0, 1.0]:
-		_box(visual, Vector3(side * 1.42, 0.48, 0.05), Vector3(0.62, 0.95, 4.9), rubber)
-		_box(visual, Vector3(side * 1.68, 0.55, 0.05), Vector3(0.08, 0.7, 4.5), dark)
-		for z in [-1.7, -0.85, 0.0, 0.85, 1.7]:
-			_wheel(visual, Vector3(side * 1.42, 0.38, z), 0.32, rubber)
-		_wheel(visual, Vector3(side * 1.42, 0.55, 2.25), 0.42, dark)
-		_wheel(visual, Vector3(side * 1.42, 0.55, -2.15), 0.4, dark)
-	_box(visual, Vector3(0.0, 0.72, -0.15), Vector3(2.15, 0.55, 3.4), paint)
-	_box(visual, Vector3(0.0, 1.15, -0.35), Vector3(1.9, 0.42, 2.3), paint)
-	_box(visual, Vector3(0.0, 1.72, -1.35), Vector3(1.55, 0.95, 1.35), paint)
-	_box(visual, Vector3(0.0, 1.85, -1.35), Vector3(1.25, 0.62, 0.06), glass)
-	_box(visual, Vector3(0.35, 2.15, -1.7), Vector3(0.12, 0.55, 0.12), dark)
-	var light_mat := _mat(Color(1.0, 0.85, 0.45), 0.4, 0.0)
-	light_mat.emission_enabled = true
-	light_mat.emission = Color(1.0, 0.8, 0.4)
-	light_mat.emission_energy_multiplier = 2.0
-	_box(visual, Vector3(-0.7, 1.15, 1.55), Vector3(0.18, 0.12, 0.08), light_mat)
-	_box(visual, Vector3(0.7, 1.15, 1.55), Vector3(0.18, 0.12, 0.08), light_mat)
-	blade_pivot = Node3D.new()
-	blade_pivot.position = Vector3(0.0, 0.95, 2.45)
-	visual.add_child(blade_pivot)
-	_box(blade_pivot, Vector3(0.0, 0.05, 0.72), Vector3(4.4, 1.45, 0.16), metal)
-	_box(blade_pivot, Vector3(0.0, -0.62, 0.78), Vector3(4.4, 0.12, 0.22), dark)
-	_box(blade_pivot, Vector3(-1.55, 0.15, 0.15), Vector3(0.12, 0.12, 1.15), dark)
-	_box(blade_pivot, Vector3(1.55, 0.15, 0.15), Vector3(0.12, 0.12, 1.15), dark)
+func _hold_shore() -> void:
+	if terrain == null or terrain.spec.get("water") == null:
+		return
+	var depth := terrain.water_depth(global_position.x, global_position.z)
+	if depth < 0.2:
+		return
+	linear_velocity *= 0.8
+	if depth < 1.0:
+		return
+	var best := global_position
+	var best_d := depth
+	for i in 8:
+		var ang := float(i) * TAU / 8.0
+		var p := global_position + Vector3(cos(ang), 0.0, sin(ang)) * 2.0
+		var d := terrain.water_depth(p.x, p.z)
+		if d < best_d:
+			best_d = d
+			best = p
+	var t := global_transform
+	t.origin.x = best.x
+	t.origin.z = best.z
+	t.origin.y = terrain.sample(best.x, best.z) + 0.55
+	global_transform = t
+	linear_velocity *= 0.15
 
 
-func _box(parent: Node3D, center: Vector3, size: Vector3, material: Material) -> void:
-	var mesh_node := MeshInstance3D.new()
-	var mesh := BoxMesh.new()
-	mesh.size = size
-	mesh_node.mesh = mesh
-	mesh_node.position = center
-	mesh_node.material_override = material
-	parent.add_child(mesh_node)
+func _pose_blade() -> void:
+	if blade_anim == null or not blade_anim.has_animation("blade-close"):
+		return
+	var clip := blade_anim.get_animation("blade-close")
+	var t := clampf(inverse_lerp(0.45, -0.65, blade_angle), 0.0, 1.0)
+	if blade_anim.current_animation != "blade-close":
+		blade_anim.play("blade-close")
+	blade_anim.seek(t * clip.length, true)
+	blade_anim.pause()
 
 
-func _wheel(parent: Node3D, center: Vector3, radius: float, material: Material) -> void:
-	var mesh_node := MeshInstance3D.new()
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = radius
-	mesh.bottom_radius = radius
-	mesh.height = 0.5
-	mesh.radial_segments = 12
-	mesh_node.mesh = mesh
-	mesh_node.position = center
-	mesh_node.rotation.z = PI * 0.5
-	mesh_node.material_override = material
-	parent.add_child(mesh_node)
+func _scroll_tracks(speed: float, dt: float) -> void:
+	track_scroll = wrapf(track_scroll + speed * dt * 0.18, 0.0, 1.0)
+	for mat in track_mats:
+		mat.uv1_offset.y = track_scroll
 
 
-func _mat(color: Color, roughness: float, metallic: float) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = roughness
-	mat.metallic = metallic
-	return mat
+func _load_model() -> void:
+	model = (load("res://assets/models/bulldozer.glb") as PackedScene).instantiate()
+	add_child(model)
+	blade_anim = _find_player(model)
+	_collect_tracks(model)
+
+
+func _find_player(node: Node) -> AnimationPlayer:
+	if node is AnimationPlayer:
+		return node
+	for child in node.get_children():
+		var found := _find_player(child)
+		if found:
+			return found
+	return null
+
+
+func _collect_tracks(node: Node) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		var box := mi.get_aabb()
+		var low := box.position.y + box.size.y * 0.5 < 0.85
+		var long := box.size.z > box.size.y and box.size.x < 1.4
+		if low and long and mi.mesh != null:
+			var source := mi.get_active_material(0)
+			if source is StandardMaterial3D:
+				var mat := (source as StandardMaterial3D).duplicate() as StandardMaterial3D
+				mi.set_surface_override_material(0, mat)
+				track_mats.append(mat)
+	for child in node.get_children():
+		_collect_tracks(child)
+
+
+func _make_dust() -> void:
+	dust = GPUParticles3D.new()
+	dust.amount = 36
+	dust.lifetime = 0.9
+	dust.explosiveness = 0.05
+	dust.emitting = false
+	dust.position = Vector3(0.0, 0.35, 2.6)
+	var proc := ParticleProcessMaterial.new()
+	proc.direction = Vector3(0.0, 1.0, -0.2)
+	proc.spread = 28.0
+	proc.initial_velocity_min = 0.6
+	proc.initial_velocity_max = 1.8
+	proc.gravity = Vector3(0.0, -1.2, 0.0)
+	proc.scale_min = 0.35
+	proc.scale_max = 0.9
+	proc.color = Color(0.45, 0.32, 0.18, 0.45)
+	dust.process_material = proc
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.45, 0.45)
+	dust.draw_pass_1 = quad
+	var blade_node := model.find_child("blade", true, false)
+	if blade_node:
+		blade_node.add_child(dust)
+	else:
+		add_child(dust)

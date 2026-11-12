@@ -6,7 +6,6 @@ var terrain: TerrainWorld
 var foliage: Foliage
 var vehicle: TrackedVehicle
 var human: Walker
-var titan: Walker
 var camera: ChaseCamera
 var active: Node3D
 var kind := "robot"
@@ -29,12 +28,7 @@ func _ready() -> void:
 	add_child(vehicle)
 	human = Walker.new()
 	human.terrain = terrain
-	human.giant = false
 	add_child(human)
-	titan = Walker.new()
-	titan.terrain = terrain
-	titan.giant = true
-	add_child(titan)
 	camera = ChaseCamera.new()
 	camera.terrain = terrain
 	add_child(camera)
@@ -102,11 +96,11 @@ func _process(dt: float) -> void:
 		vehicle.steer = clampf(steer, -1.0, 1.0)
 		var rate := 0.8 * dt
 		if raise:
-			vehicle.blade = minf(0.45, vehicle.blade + rate)
+			vehicle.blade_angle = minf(0.45, vehicle.blade_angle + rate)
 		if lower:
-			vehicle.blade = maxf(-0.7, vehicle.blade - rate)
+			vehicle.blade_angle = maxf(-0.65, vehicle.blade_angle - rate)
 	else:
-		var walker: Walker = human if kind == "human" else titan
+		var walker: Walker = human
 		walker.wish = Vector2(clampf(side, -1.0, 1.0), clampf(ahead, -1.0, 1.0))
 		walker.running = Input.is_key_pressed(KEY_SHIFT) or rt > 0.4
 		walker.jumping = Input.is_key_pressed(KEY_SPACE) or Input.is_joy_button_pressed(0, JOY_BUTTON_A)
@@ -138,11 +132,11 @@ func _world() -> void:
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 0.38
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 0.85
+	env.tonemap_exposure = 0.62
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-	env.fog_density = 0.00022
-	env.fog_aerial_perspective = 0.55
+	env.fog_density = 0.00016
+	env.fog_aerial_perspective = 0.82
 	env.fog_light_color = Color(0.72, 0.78, 0.84)
 	if RenderingServer.get_current_rendering_method() == "forward_plus":
 		env.ssao_enabled = true
@@ -164,8 +158,8 @@ func _world() -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	sun.directional_shadow_max_distance = 1100.0
-	sun.shadow_bias = 0.06
-	sun.shadow_normal_bias = 1.1
+	sun.shadow_bias = 0.12
+	sun.shadow_normal_bias = 2.0
 	sun.directional_shadow_blend_splits = true
 	add_child(sun)
 
@@ -187,18 +181,26 @@ func _open_site(index: int) -> void:
 	terrain.setup(spec, albedo, _grain())
 	foliage.rebuild(terrain, albedo)
 	_place(vehicle, float(spec["spawn"][0]), float(spec["spawn"][1]), 0.0)
-	vehicle.blade = 0.18
-	vehicle.speed = 0.0
+	vehicle.blade_angle = 0.28
+	vehicle.linear_velocity = Vector3.ZERO
+	vehicle.angular_velocity = Vector3.ZERO
 	_place(human, float(spec["spawn"][0]) + 12.0, float(spec["spawn"][1]) - 8.0, 0.0)
-	_place(titan, float(spec["spawn"][0]) - 30.0, float(spec["spawn"][1]) - 20.0, 0.0)
 	terrain.focus = vehicle.global_position
 	print("site ", spec["name"], " cut ", terrain.field.cut_m3, " fill ", terrain.field.fill_m3)
 
 
 func _place(body: Node3D, x: float, z: float, yaw_v: float) -> void:
 	var y := terrain.sample(x, z)
-	body.global_position = Vector3(x, y + 0.35, z)
+	var fwd := Vector3(sin(yaw_v), 0.0, cos(yaw_v))
+	var n := Vector3.UP
+	var r := n.cross(fwd).normalized()
+	var lift := 0.55 if body is TrackedVehicle else 0.05
+	body.global_transform = Transform3D(Basis(r, n, fwd), Vector3(x, y + lift, z))
 	body.set("yaw", yaw_v)
+	if body is RigidBody3D:
+		body.linear_velocity = Vector3.ZERO
+		body.angular_velocity = Vector3.ZERO
+		body.freeze = shot_dir != ""
 
 
 func _activate(next: String) -> void:
@@ -207,15 +209,11 @@ func _activate(next: String) -> void:
 	vehicle.visible = next == "robot"
 	human.set_physics_process(next == "human")
 	human.visible = next == "human"
-	titan.set_physics_process(next == "titan")
-	titan.visible = next == "titan"
 	match next:
 		"robot":
 			active = vehicle
-		"human":
-			active = human
 		_:
-			active = titan
+			active = human
 	camera.target = active
 	camera.configure(next)
 	camera.yaw_offset = 0.0
@@ -229,33 +227,59 @@ func _ui() -> void:
 	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(ui)
 	var button := Button.new()
-	button.text = "Menu"
-	button.position = Vector2(14, 670)
-	button.size = Vector2(72, 34)
+	button.text = "Settings"
+	button.position = Vector2(14, 674)
+	button.size = Vector2(92, 32)
 	button.pressed.connect(_toggle_menu)
 	ui.add_child(button)
 	panel = PanelContainer.new()
-	panel.position = Vector2(14, 470)
-	panel.size = Vector2(280, 180)
+	panel.position = Vector2(14, 360)
+	panel.custom_minimum_size = Vector2(260, 0)
 	panel.visible = false
 	var box := VBoxContainer.new()
 	panel.add_child(box)
+	var body_label := Label.new()
+	body_label.text = "Body"
+	box.add_child(body_label)
 	var bodies := HBoxContainer.new()
 	box.add_child(bodies)
-	for entry in [["Titan", "titan"], ["Robot", "robot"], ["Human", "human"]]:
+	for entry in [["Robot", "robot"], ["Human", "human"]]:
 		var b := Button.new()
 		b.text = entry[0]
 		b.pressed.connect(_activate.bind(entry[1]))
 		bodies.add_child(b)
-	var places := HBoxContainer.new()
-	box.add_child(places)
+	var place_label := Label.new()
+	place_label.text = "Place"
+	box.add_child(place_label)
 	for i in sites.size():
-		var b := Button.new()
-		b.text = str(sites[i]["name"])
-		var index := i
-		b.pressed.connect(func() -> void: _open_site(index))
-		places.add_child(b)
+		var spec: Dictionary = sites[i]
+		var spawns: Array = spec.get("spawns", [])
+		for j in spawns.size():
+			var spawn: Dictionary = spawns[j]
+			var b := Button.new()
+			b.text = "%s · %s" % [spec["name"], spawn["name"]]
+			var site_i := i
+			var spawn_i := j
+			b.pressed.connect(func() -> void: _go_spawn(site_i, spawn_i))
+			box.add_child(b)
 	ui.add_child(panel)
+
+
+func _go_spawn(site_i: int, spawn_i: int) -> void:
+	if site_i != site_index:
+		_open_site(site_i)
+	var spawn: Dictionary = sites[site_i]["spawns"][spawn_i]
+	var yaw_v := float(spawn.get("yaw", 0.0))
+	var at: Array = spawn["at"]
+	_place(active, float(at[0]), float(at[1]), yaw_v)
+	var other: Node3D = human if active == vehicle else vehicle
+	_place(other, float(at[0]) + 10.0, float(at[1]) - 8.0, yaw_v)
+	terrain.focus = active.global_position
+	terrain.ensure_patch(Vector2(active.global_position.x, active.global_position.z))
+	camera.snap()
+	camera.hold = false
+	if panel:
+		panel.visible = false
 
 
 func _toggle_menu() -> void:
@@ -304,43 +328,62 @@ func _read_args() -> void:
 func _shots() -> void:
 	vehicle.set_physics_process(false)
 	human.set_physics_process(false)
-	titan.set_physics_process(false)
 	await get_tree().create_timer(0.2).timeout
-	for _i in 6:
+	for _i in 4:
 		await get_tree().process_frame
 	await _shot("basin-robot")
-	vehicle.blade = -0.42
+	_place(vehicle, 1240.0, 1840.0, 0.0)
+	terrain.ensure_patch(Vector2(1240.0, 1840.0))
+	terrain.rebuild_around(vehicle.global_position)
+	camera.configure("robot")
+	await _shot("basin-before-cut")
+	vehicle.blade_angle = -0.62
+	vehicle._pose_blade()
 	var fwd := vehicle.forward()
+	var right := Vector3(fwd.z, 0.0, -fwd.x)
 	var walked := 0.0
-	while walked < 16.0:
-		var ground := terrain.sample(vehicle.global_position.x, vehicle.global_position.z)
-		var edge := ground - 1.05
-		var at := vehicle.global_position + fwd * 3.3
-		Soil.plane_blade(terrain.field, at.x, at.z, fwd.x, fwd.z, 3.6, edge, float(terrain.spec["repose"]))
-		vehicle.global_position += fwd * 0.8
-		walked += 0.8
+	while walked < 12.0:
+		var shoulder := vehicle.global_position + right * 2.6
+		var edge := terrain.sample(shoulder.x, shoulder.z) - 1.05
+		var at := vehicle.global_position + fwd * 3.15
+		terrain.cut_blade(at.x, at.z, fwd.x, fwd.z, 3.5, edge, float(terrain.spec["repose"]))
+		vehicle.global_position += fwd * 0.4
+		walked += 0.4
 	terrain.refresh_edits()
-	_place(vehicle, vehicle.global_position.x, vehicle.global_position.z, vehicle.yaw)
+	_place(vehicle, vehicle.global_position.x, vehicle.global_position.z, 0.0)
+	vehicle.blade_angle = -0.62
+	vehicle._pose_blade()
 	terrain.rebuild_around(vehicle.global_position)
 	for _i in 4:
 		await get_tree().process_frame
-	print("cut ", terrain.field.cut_m3, " fill ", terrain.field.fill_m3)
-	camera.pitch_up = 0.72
-	await _shot("basin-after-cut", 0.7)
+	var floor_h := terrain.sample(vehicle.global_position.x, vehicle.global_position.z)
+	var beside_h := terrain.sample(vehicle.global_position.x + 5.0, vehicle.global_position.z)
+	print("cut ", terrain.patch.field.cut_m3, " fill ", terrain.patch.field.fill_m3, " floor ", floor_h, " beside ", beside_h)
+	var side := Vector3(fwd.z, 0.0, -fwd.x)
+	camera.hold = true
+	var trench := vehicle.global_position - fwd * 5.0
+	camera.camera.global_position = trench + side * 8.0 + Vector3.UP * 3.2
+	camera.camera.look_at(trench + Vector3.UP * 0.2, Vector3.UP)
+	for _j in 3:
+		await get_tree().process_frame
+	await _shot("basin-after-cut")
+	camera.hold = false
 	camera.configure("robot")
 	_activate("human")
 	await _shot("basin-human")
-	_activate("titan")
-	await _shot("basin-titan")
 	_activate("robot")
 	_open_site(1)
-	for _i in 8:
+	for _i in 6:
 		await get_tree().process_frame
 	await _shot("ile-robot")
 	_activate("human")
 	await _shot("ile-human")
-	_activate("titan")
-	await _shot("ile-titan")
+	_go_spawn(1, 2)
+	_activate("human")
+	camera.configure("human")
+	camera.distance = 8.0
+	camera.pitch_up = 0.22
+	await _shot("ile-heights")
 	print("shots done")
 	get_tree().quit()
 
@@ -349,6 +392,7 @@ func _shot(name: String, yaw_offset: float = 0.0) -> void:
 	terrain.focus = active.global_position
 	terrain.rebuild_around(active.global_position)
 	camera.yaw_offset = yaw_offset
+	camera.idle = -30.0
 	camera._process(0.016)
 	print(name, " body ", active.global_position, " cam ", camera.camera.global_position, " ground ", terrain.sample(active.global_position.x, active.global_position.z))
 	for _i in 3:

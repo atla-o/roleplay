@@ -55,14 +55,23 @@ static func plane_blade(field: Field, east: float, north: float, fx: float, fz: 
 	var berm := PackedInt32Array()
 	berm.append_array(front)
 	var leftover := moved - placed
+	var side_share := leftover * 0.5
 	for side_sign in [-1.0, 1.0]:
 		var off := side + 0.4
 		var end_cells := _open_cells(field, _cells(field, east + rx * side_sign * off, north + rz * side_sign * off, 0.7, 0.45, fx, fz), protected, edge_y)
-		var got := _add_volume(field, end_cells, leftover * 0.5, area)
+		var got := _add_volume(field, end_cells, side_share, area)
 		leftover -= got
 		berm.append_array(end_cells)
-	if leftover > 0.0001 and berm.size() > 0:
-		_add_volume(field, berm, leftover, area)
+	# A 2 m cell can swallow the whole bite, so the mound in front is inside
+	# the cut and cannot take spoil. Park the rest on open ground beside it.
+	if leftover > 0.0001:
+		var ring := _open_cells(field, _cells(field, east + fx * 1.6, north + fz * 1.6, 2.4, side + 1.4, fx, fz), protected, edge_y)
+		leftover -= _add_volume(field, ring, leftover, area)
+		berm.append_array(ring)
+	if leftover > 0.0001:
+		var wide := _open_cells(field, _cells(field, east, north, 8.0, side + 6.0, fx, fz), protected, edge_y - 2.0)
+		_add_volume(field, wide, leftover, area)
+		berm.append_array(wide)
 	_slump(field, berm, repose_deg, fx, fz, protected, edge_y)
 	field.cut_m3 += moved
 	field.fill_m3 += moved

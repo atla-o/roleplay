@@ -1,6 +1,31 @@
 # Roleplay
 
-Roleplay is the Creation division's world map and measured basin. The map is a CesiumJS globe (Apache-2.0) split into Tier 1 cold squares, north first: Northern Canada, the United States including North Dakota, Northern Europe, Russia, and Antarctica. One square, the Polar Desert Basin, opens the measured 4 × 4 km surface. There the existing Three.js basin keeps real ArcticDEM and NHN ground, cold-method drainage, the ninety-day window, and a 1.7 m walk.
+The playable build is the Godot 4.7 project in `godot/`. Desktop play uses the Forward+ renderer. The web preview uses the Compatibility renderer so it can load on GitHub Pages. The earlier Cesium and Three.js viewers are still in this repository.
+
+## Play the Godot world
+
+Controls are the same on Linux and in the browser.
+
+- **Robot.** W throttle, S brake into reverse, A and D steer. Q raises the blade, E lowers it. Hold the left mouse button to lower the blade and the right button to raise it. The mouse, or the right stick, orbits the chase camera. It recenters after about a second and a half.
+- **Human.** A 1.8 m person, camera behind them. WASD walks, Shift runs, Space jumps. Walk, run and idle come from the character's animation clips.
+- **Settings.** Nothing is on screen until the mouse, with a free cursor, touches the top edge. Settings then fades in, and fades out a couple of seconds after the pointer leaves. H or Tab pins it shown, then hidden, then back to hover. It switches Robot and Human, and teleports to Northern 1 — Canada, Northern 2 — Europe, or Northern 3 — Russia. Esc releases the mouse.
+- **Water.** Shallows slow you. Deeper water stops you. The outer ground falls toward the water so the tile is not a square wall.
+- **Gamepad.** Left stick drives, triggers throttle and reverse, bumpers move the blade, right stick looks, bottom face button jumps.
+
+```bash
+# Godot 4.7.2, from the project folder
+godot --path godot
+```
+
+`godot --headless --path godot -s res://tests/conservation.gd` checks that a blade cut keeps the volume: cut equals fill, and the sum of the heights does not change.
+
+Export presets are Linux x86_64, Linux arm64 (both Forward+), and Web (Compatibility, no threads). The pull-request workflow exports them. Each Linux build is a `.tar.gz` workflow artifact and is also copied to the preview at `downloads/` (`roleplay-linux-x86_64.tar.gz` and `roleplay-linux-aarch64.tar.gz`). The terrain is inside the tarball. `./run.sh` tries Vulkan Forward+. `./run-compat.sh` forces OpenGL Compatibility, which is the fallback for Asahi. The web build is the preview.
+
+The frame rate is printed to the console every two seconds (`fps N`). On this agent's software OpenGL it was about 2 fps. That number is not a measurement of an M2 MacBook.
+
+## Earlier viewer
+
+Roleplay is the Creation division's world map and measured terrain. The map is a CesiumJS globe (Apache-2.0) split into Tier 1 cold squares, north first: Northern Canada, the United States including North Dakota, Northern Europe, Russia, and Antarctica, plus the Côte-Nord square. Two squares open measured ground. Polar Desert Basin is the 4 × 4 km Arctic surface: ArcticDEM and NHN, cold-method drainage, the ninety-day window, and a 1.7 m walk. Île René-Levasseur is the island in the Manicouagan ring reservoir. On the globe the ring reads as an O. That square is research terrain, not land to reshape: mass movers stay off it, and the crew there is a survey.
 
 At globe scale the player is a giant. Swarm orders move mass movers, then the bio builder and weather manipulator, then structure builders, across a selected square. Cut and fill on that view are conserved sim parameters. They do not rewrite the measured basin.
 
@@ -22,7 +47,7 @@ npm run preview
 
 ## Bake
 
-`tools/bake/bake.py` rebuilds `public/data/` from ArcticDEM v4.1 and the NRCan National Hydro Network. See `tools/bake/README.md` and `ATTRIBUTION.md`.
+`tools/bake/bake.py` rebuilds the Polar Desert Basin rasters from ArcticDEM v4.1 and the NRCan National Hydro Network. `tools/bake/ile.py` rebuilds the Île René-Levasseur window from the NRCan HRDEM mosaic, MRDEM-30, 2020 land cover, and a GBIF occurrence seed. See `tools/bake/README.md` and `ATTRIBUTION.md`.
 
 ## Parameters
 

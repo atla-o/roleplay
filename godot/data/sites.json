@@ -1,0 +1,61 @@
+{
+  "sites": [
+    {
+      "id": "northern-1",
+      "name": "Northern 1 — Canada",
+      "heights": "basin.f32",
+      "color": "basin_color.jpg",
+      "cols": 2000,
+      "rows": 2000,
+      "spacing": 2.0,
+      "hmin": 68.330719,
+      "hmax": 273.656769,
+      "repose": 35.0,
+      "spawn": [1936.0, 1568.0],
+      "yaw": 0.0,
+      "water": 74.0,
+      "outer_m": 144.0,
+      "forest": false,
+      "lat": 75.3971,
+      "lon": -89.5091
+    },
+    {
+      "id": "northern-2",
+      "name": "Northern 2 — Europe",
+      "heights": "europe.f32",
+      "color": "europe_color.jpg",
+      "cols": 2000,
+      "rows": 2000,
+      "spacing": 2.0,
+      "hmin": 29.0,
+      "hmax": 69.748154,
+      "repose": 34.0,
+      "spawn": [958.0, 1264.0],
+      "yaw": 0.0,
+      "water": 34.0,
+      "outer_m": 34.0,
+      "forest": false,
+      "lat": 78.04862,
+      "lon": 13.6441
+    },
+    {
+      "id": "northern-3",
+      "name": "Northern 3 — Russia",
+      "heights": "russia.f32",
+      "color": "russia_color.jpg",
+      "cols": 2000,
+      "rows": 2000,
+      "spacing": 2.0,
+      "hmin": -11.43,
+      "hmax": 11.951446,
+      "repose": 34.0,
+      "spawn": [3134.0, 3384.0],
+      "yaw": 0.0,
+      "water": -6.43,
+      "outer_m": 0.0,
+      "forest": false,
+      "lat": 70.49304,
+      "lon": 67.91264
+    }
+  ]
+}

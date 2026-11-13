@@ -108,6 +108,27 @@ export interface Reading {
   edited: boolean;
 }
 
+interface Snap {
+  z: Float32Array;
+  edited: Uint8Array;
+  graded: Uint8Array;
+  channel: Uint8Array;
+  stone: number;
+  fill: number;
+  energyMJ: number;
+  cutVolume: number;
+  surveys: number;
+  walkedM: number;
+  seq: number;
+  domes: Dome[];
+  beds: Bed[];
+  plantings: Planting[];
+  streets: Street[];
+  structures: Structure[];
+  machines: MachineBody[];
+  milestones: string[];
+}
+
 const MILESTONE_KEY = 'roleplay.creation.milestones.v1';
 
 export class Sim {
@@ -135,6 +156,7 @@ export class Sim {
   readonly structures: Structure[] = [];
   readonly milestones = new Set<string>();
   private seq = 1;
+  private readonly history: Snap[] = [];
 
   constructor(readonly field: Heightfield) {
     this.water = this.computeWater();
@@ -221,7 +243,72 @@ export class Sim {
     }
   }
 
+  canUndo(): boolean {
+    return this.history.length > 0;
+  }
+
+  /** Copy the working surface before a change, so Undo can put it back. */
+  remember(): void {
+    this.history.push({
+      z: this.field.z.slice(),
+      edited: this.field.edited.slice(),
+      graded: this.field.graded.slice(),
+      channel: this.field.channel.slice(),
+      stone: this.stone,
+      fill: this.fill,
+      energyMJ: this.energyMJ,
+      cutVolume: this.cutVolume,
+      surveys: this.surveys,
+      walkedM: this.walkedM,
+      seq: this.seq,
+      domes: structuredClone(this.domes),
+      beds: structuredClone(this.beds),
+      plantings: structuredClone(this.plantings),
+      streets: structuredClone(this.streets),
+      structures: structuredClone(this.structures),
+      machines: structuredClone(this.machineBodies),
+      milestones: [...this.milestones],
+    });
+    if (this.history.length > 8) this.history.shift();
+  }
+
+  undo(): boolean {
+    const snap = this.history.pop();
+    if (!snap) {
+      this.status = 'Nothing to undo.';
+      return false;
+    }
+    this.field.z.set(snap.z);
+    this.field.edited.set(snap.edited);
+    this.field.graded.set(snap.graded);
+    this.field.channel.set(snap.channel);
+    this.stone = snap.stone;
+    this.fill = snap.fill;
+    this.energyMJ = snap.energyMJ;
+    this.cutVolume = snap.cutVolume;
+    this.surveys = snap.surveys;
+    this.walkedM = snap.walkedM;
+    this.seq = snap.seq;
+    this.domes.splice(0, this.domes.length, ...snap.domes);
+    this.beds.splice(0, this.beds.length, ...snap.beds);
+    this.plantings.splice(0, this.plantings.length, ...snap.plantings);
+    this.streets.splice(0, this.streets.length, ...snap.streets);
+    this.structures.splice(0, this.structures.length, ...snap.structures);
+    this.machineBodies.splice(0, this.machineBodies.length, ...snap.machines);
+    this.milestones.clear();
+    for (const id of snap.milestones) this.milestones.add(id);
+    this.refreshWater();
+    this.saveMilestones();
+    this.status = 'Last action undone.';
+    return true;
+  }
+
+  private forget(): void {
+    this.history.pop();
+  }
+
   restoreMeasured(): void {
+    this.remember();
     this.field.restore();
     this.stone = 0;
     this.fill = 0;
@@ -235,6 +322,8 @@ export class Sim {
   }
 
   cutPolyline(points: { x: number; z: number }[], invertStart?: number, profile: 'graded' | 'ditch' = 'graded'): Result {
+    if (points.length < 2) return this.fail('A line needs two points. Click the ground, then commit.');
+    this.remember();
     const side = (this.physics.design_side_slope_deg * Math.PI) / 180;
     const before = this.water.ponded_m3;
     const cut = cutChannel(this.field, points, {
@@ -247,6 +336,7 @@ export class Sim {
       maxCut: 1.8,
     });
     if (cut.cut_m3 < 1) {
+      this.forget();
       this.status = 'That line does not lower the ground. The grade is already below the invert.';
       return { ok: false, reason: this.status };
     }
@@ -261,6 +351,7 @@ export class Sim {
   }
 
   grade(x: number, z: number, radius = this.physics.pad_radius_m): Result {
+    this.remember();
     const heading = this.downslopeHeading(x, z);
     const side = (this.physics.design_side_slope_deg * Math.PI) / 180;
     const result = gradePad(
@@ -275,6 +366,7 @@ export class Sim {
       this.physics.fill_fraction_of_cut,
     );
     if (!result.ok) {
+      this.forget();
       this.status = result.reason ?? 'The pad was not graded.';
       return { ok: false, reason: this.status };
     }
@@ -294,9 +386,11 @@ export class Sim {
   mine(x: number, z: number): Result {
     const info = this.readingAt(x, z);
     if (!info) return { ok: false, reason: 'Off the measured surface.' };
+    this.remember();
     const side = (this.physics.design_side_slope_deg * Math.PI) / 180;
     const cut = digPit(this.field, x, z, this.physics.mine_radius_m, this.physics.mine_depth_m, side);
     if (cut.cut_m3 < 1) {
+      this.forget();
       this.status = 'The miner finds nothing to take here.';
       return { ok: false, reason: this.status };
     }
@@ -312,6 +406,7 @@ export class Sim {
   survey(x: number, z: number): Result {
     const info = this.readingAt(x, z);
     if (!info) return { ok: false, reason: 'Off the measured surface.' };
+    this.remember();
     this.reading = info;
     this.surveys++;
     this.placeMachine('bio-builder', { x, z }, 0.4, 'work');
@@ -334,8 +429,9 @@ export class Sim {
       }
     }
     if (this.stone + 1e-6 < this.physics.dome_stone_m3) {
-      return this.fail(`Stone bank is short by ${fmt(this.physics.dome_stone_m3 - this.stone)} m³.`);
+      return this.fail(`Stone bank is short by ${fmt(this.physics.dome_stone_m3 - this.stone)} m³. Cut or mine first.`);
     }
+    this.remember();
     this.stone -= this.physics.dome_stone_m3;
     this.domes.push({ id: this.seq++, x, z, radius });
     this.placeMachine('weather-manipulator', { x: x + radius + 6, z }, Math.PI, 'work');
@@ -349,6 +445,7 @@ export class Sim {
     if (wet) return this.fail(wet);
     const slope = this.slopeAt(x, z);
     if (slope > 14) return this.fail(`Slope ${slope.toFixed(1)}° is too steep for a soil bed.`);
+    this.remember();
     this.beds.push({ id: this.seq++, x, z, heading: this.downslopeHeading(x, z) });
     this.placeMachine('bio-builder', { x: x + 8, z: z + 6 }, 0.6, 'work');
     this.status = 'Living soil bed placed.';
@@ -382,6 +479,7 @@ export class Sim {
       });
       if (!near) return this.fail(`${spec.common} waits for nearby ${req.module.replace('-', ' ')} to establish.`);
     }
+    this.remember();
     this.plantings.push({
       id: this.seq++,
       speciesId,
@@ -419,7 +517,8 @@ export class Sim {
       if (samples[i].bridge) bridge += step;
     }
     const stone = length * this.physics.street_stone_m3_per_m + bridge * this.physics.bridge_extra_stone_m3_per_m;
-    if (this.stone + 1e-6 < stone) return this.fail(`Stone bank is short by ${fmt(stone - this.stone)} m³.`);
+    if (this.stone + 1e-6 < stone) return this.fail(`Stone bank is short by ${fmt(stone - this.stone)} m³. Cut or mine first.`);
+    this.remember();
     this.stone -= stone;
     this.streets.push({ id: this.seq++, width: this.physics.street_width_m, samples, length, stone });
     const mid = samples[Math.floor(samples.length / 2)];
@@ -437,7 +536,8 @@ export class Sim {
     }[kind];
     const check = this.footprintOk(x, z, size.length, size.width, heading);
     if (!check.ok) return this.fail(check.reason ?? 'The module does not sit.');
-    if (this.stone + 1e-6 < size.stone) return this.fail(`Stone bank is short by ${fmt(size.stone - this.stone)} m³.`);
+    if (this.stone + 1e-6 < size.stone) return this.fail(`Stone bank is short by ${fmt(size.stone - this.stone)} m³. Cut or mine first.`);
+    this.remember();
     this.stone -= size.stone;
     this.structures.push({
       id: this.seq++,

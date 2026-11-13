@@ -1,0 +1,150 @@
+# Publishes Linux tarballs when a version tag is pushed on main.
+# Do not run this by hand. Tagging main is the trigger.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  export-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            godot_os: linux.x86_64
+            preset: Linux x86_64
+            binary: roleplay.x86_64
+            label: x86_64
+            tarball: roleplay-linux-x86_64.tar.gz
+          - runner: ubuntu-24.04-arm
+            godot_os: linux.arm64
+            preset: Linux arm64
+            binary: roleplay.arm64
+            label: aarch64
+            tarball: roleplay-linux-aarch64.tar.gz
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag must point at main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Cache Godot
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/godot
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-${{ matrix.godot_os }}-templates
+
+      - name: Install Godot
+        run: |
+          set -euo pipefail
+          if [ ! -x /opt/godot/godot ]; then
+            mkdir -p /opt/godot
+            curl -fsSL -o /tmp/godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_${{ matrix.godot_os }}.zip"
+            unzip -o /tmp/godot.zip -d /opt/godot
+            mv "/opt/godot/Godot_v${GODOT_VERSION}-stable_${{ matrix.godot_os }}" /opt/godot/godot
+            chmod +x /opt/godot/godot
+          fi
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          if [ ! -f "$TEMPLATE_DIR/linux_release.x86_64" ] || [ ! -f "$TEMPLATE_DIR/linux_release.arm64" ]; then
+            mkdir -p "$TEMPLATE_DIR"
+            curl -fsSL -o /tmp/templates.tpz "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+            rm -rf /tmp/godot-templates
+            unzip -q /tmp/templates.tpz -d /tmp/godot-templates
+            cp -a /tmp/godot-templates/templates/. "$TEMPLATE_DIR/"
+          fi
+
+      - name: Export ${{ matrix.preset }}
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          /opt/godot/godot --headless --path godot --export-release "${{ matrix.preset }}" "../build/${{ matrix.binary }}"
+          test -x "build/${{ matrix.binary }}"
+          test "$(stat -c%s "build/${{ matrix.binary }}")" -gt 40000000
+
+      - name: Pack tarball
+        run: |
+          set -euo pipefail
+          chmod +x tools/package_linux_build.sh
+          ./tools/package_linux_build.sh "build/${{ matrix.binary }}" "build/${{ matrix.tarball }}" "${{ matrix.label }}"
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.tarball }}
+          path: build/${{ matrix.tarball }}
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: export-linux
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download tarballs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: roleplay-linux-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -f dist/roleplay-linux-x86_64.tar.gz
+          test -f dist/roleplay-linux-aarch64.tar.gz
+          TAG="${GITHUB_REF_NAME}"
+          BASE="https://github.com/atla-o/roleplay/releases/download/${TAG}"
+          gh release create "$TAG" \
+            dist/roleplay-linux-x86_64.tar.gz \
+            dist/roleplay-linux-aarch64.tar.gz \
+            --title "Roleplay ${TAG}" \
+            --notes "$(cat <<EOF
+          Roleplay is a native Linux app. The terrain is inside the tarball.
+
+          ## Install
+
+          Fedora Asahi (aarch64, 16K pages) and other arm64 machines:
+
+          \`\`\`bash
+          curl -L -o roleplay-linux-aarch64.tar.gz ${BASE}/roleplay-linux-aarch64.tar.gz
+          tar -xzf roleplay-linux-aarch64.tar.gz
+          cd roleplay-linux-aarch64
+          ./install.sh
+          roleplay
+          \`\`\`
+
+          x86_64:
+
+          \`\`\`bash
+          curl -L -o roleplay-linux-x86_64.tar.gz ${BASE}/roleplay-linux-x86_64.tar.gz
+          tar -xzf roleplay-linux-x86_64.tar.gz
+          cd roleplay-linux-x86_64
+          ./install.sh
+          roleplay
+          \`\`\`
+
+          \`roleplay\` tries Vulkan Forward+. If the window stays black, run \`~/.local/share/roleplay/run-compat.sh\`. That forces OpenGL Compatibility. \`./uninstall.sh\` removes the install and restores \`~/.local/bin/roleplay.bak\` if a previous launcher was saved.
+
+          You start in the dozer on Northern 1 — Canada. W drives. Move the mouse to the top edge for Settings.
+          EOF
+          )"

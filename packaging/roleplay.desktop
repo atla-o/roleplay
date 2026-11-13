@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Roleplay
+Comment=A 1:1 ground you can walk and reshape.
+Exec=roleplay
+Icon=roleplay
+StartupWMClass=roleplay
+Categories=Game;Simulation;
+Terminal=false

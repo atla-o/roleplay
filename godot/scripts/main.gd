@@ -10,8 +10,16 @@ var camera: ChaseCamera
 var active: Node3D
 var kind := "robot"
 var ui: Control
+var hud_chrome: Control
 var panel: PanelContainer
+var hint: Label
+var hud_alpha := 0.0
+var hud_goal := 0.0
+var hud_pin := 0
+var hud_leave_at := -1.0
 var capture := false
+var dig_test := false
+var shot_drive := false
 var shot_dir := ""
 var shot_until := ""
 var shot_from := ""
@@ -24,6 +32,7 @@ var bench_elapsed := 0.0
 var bench_times := PackedFloat32Array()
 
 func _ready() -> void:
+	DisplayServer.window_set_title("Roleplay")
 	_read_args()
 	_world()
 	terrain = TerrainWorld.new()
@@ -42,8 +51,12 @@ func _ready() -> void:
 	_load_sites()
 	_ui()
 	_activate("robot")
+	vehicle.blade_angle = -0.5
+	DisplayServer.window_set_title("Roleplay")
 	if shot_dir != "":
 		_shots()
+	elif dig_test:
+		_run_dig_test()
 	elif bench:
 		camera.hold = true
 		vehicle.set_physics_process(false)
@@ -60,6 +73,7 @@ func _process(dt: float) -> void:
 		print("fps ", Engine.get_frames_per_second())
 	if active:
 		terrain.focus = active.global_position
+	_fade_hud(dt)
 	if panel and panel.visible:
 		return
 	var throttle := 0.0
@@ -105,6 +119,10 @@ func _process(dt: float) -> void:
 			lower = true
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
 			raise = true
+	if dig_test or shot_drive:
+		throttle = 1.0
+		steer = 0.0
+		lower = true
 	if kind == "robot":
 		vehicle.throttle = clampf(throttle, -1.0, 1.0)
 		vehicle.steer = clampf(steer, -1.0, 1.0)
@@ -124,15 +142,24 @@ func _process(dt: float) -> void:
 		walker.jumping = Input.is_key_pressed(KEY_SPACE) or Input.is_joy_button_pressed(0, JOY_BUTTON_A)
 
 
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_H or event.keycode == KEY_TAB:
+			_cycle_hud_pin()
+			get_viewport().set_input_as_handled()
+
+
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("ui_cancel") or (event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE):
-		if panel:
-			panel.visible = false
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+			if panel:
+				panel.visible = false
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if panel == null or not panel.visible:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+			_hide_hud_if_auto()
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		camera.orbit(event.relative.x * 0.004, event.relative.y * 0.0025)
 
@@ -213,12 +240,18 @@ func _open_site(index: int) -> void:
 	print("loading ", spec["name"])
 	terrain.setup(spec, albedo, _grain())
 	foliage.rebuild(terrain, albedo)
-	_place(vehicle, float(spec["spawn"][0]), float(spec["spawn"][1]), 0.0)
-	vehicle.blade_angle = 0.28
+	var yaw_v := float(spec.get("yaw", 0.0))
+	var sx := float(spec["spawn"][0])
+	var sz := float(spec["spawn"][1])
+	_place(vehicle, sx, sz, yaw_v)
+	vehicle.blade_angle = -0.5
 	vehicle.linear_velocity = Vector3.ZERO
 	vehicle.angular_velocity = Vector3.ZERO
-	_place(human, float(spec["spawn"][0]) + 12.0, float(spec["spawn"][1]) - 8.0, 0.0)
-	terrain.focus = vehicle.global_position
+	_place(human, sx + 14.0, sz - 10.0, yaw_v)
+	if kind == "human":
+		_place(human, sx, sz, yaw_v)
+		_place(vehicle, sx + 14.0, sz - 10.0, yaw_v)
+	terrain.focus = active.global_position if active else vehicle.global_position
 	_tune_site()
 	print("site ", spec["name"], " cut ", terrain.field.cut_m3, " fill ", terrain.field.fill_m3)
 
@@ -269,23 +302,57 @@ func _activate(next: String) -> void:
 
 
 func _ui() -> void:
-	if capture:
-		return
 	ui = Control.new()
 	ui.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(ui)
+	var hot := Control.new()
+	hot.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	hot.offset_bottom = 28.0
+	hot.mouse_filter = Control.MOUSE_FILTER_STOP
+	hot.mouse_entered.connect(_hud_enter)
+	hot.mouse_exited.connect(_hud_leave)
+	ui.add_child(hot)
+	hud_chrome = Control.new()
+	hud_chrome.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hud_chrome.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_chrome.modulate.a = 0.0
+	hud_chrome.visible = false
+	ui.add_child(hud_chrome)
 	var button := Button.new()
 	button.text = "Settings"
-	button.position = Vector2(14, 674)
-	button.size = Vector2(92, 32)
+	button.focus_mode = Control.FOCUS_NONE
+	button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	button.offset_left = -128.0
+	button.offset_top = 14.0
+	button.offset_right = -16.0
+	button.offset_bottom = 48.0
 	button.pressed.connect(_toggle_menu)
-	ui.add_child(button)
+	button.mouse_entered.connect(_hud_enter)
+	button.mouse_exited.connect(_hud_leave)
+	hud_chrome.add_child(button)
 	panel = PanelContainer.new()
-	panel.position = Vector2(14, 360)
-	panel.custom_minimum_size = Vector2(260, 0)
+	panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	panel.offset_left = -300.0
+	panel.offset_top = 56.0
+	panel.offset_right = -16.0
+	panel.offset_bottom = 380.0
 	panel.visible = false
+	panel.mouse_entered.connect(_hud_enter)
+	panel.mouse_exited.connect(_hud_leave)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.07, 0.08, 0.09, 0.94)
+	style.corner_radius_top_left = 8
+	style.corner_radius_top_right = 8
+	style.corner_radius_bottom_left = 8
+	style.corner_radius_bottom_right = 8
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 12
+	style.content_margin_bottom = 12
+	panel.add_theme_stylebox_override("panel", style)
 	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
 	panel.add_child(box)
 	var body_label := Label.new()
 	body_label.text = "Body"
@@ -295,46 +362,126 @@ func _ui() -> void:
 	for entry in [["Robot", "robot"], ["Human", "human"]]:
 		var b := Button.new()
 		b.text = entry[0]
+		b.focus_mode = Control.FOCUS_NONE
 		b.pressed.connect(_activate.bind(entry[1]))
 		bodies.add_child(b)
 	var place_label := Label.new()
-	place_label.text = "Place"
+	place_label.text = "Region"
 	box.add_child(place_label)
 	for i in sites.size():
 		var spec: Dictionary = sites[i]
-		var spawns: Array = spec.get("spawns", [])
-		for j in spawns.size():
-			var spawn: Dictionary = spawns[j]
-			var b := Button.new()
-			b.text = "%s · %s" % [spec["name"], spawn["name"]]
-			var site_i := i
-			var spawn_i := j
-			b.pressed.connect(func() -> void: _go_spawn(site_i, spawn_i))
-			box.add_child(b)
-	ui.add_child(panel)
+		var region := Button.new()
+		region.text = str(spec["name"])
+		region.focus_mode = Control.FOCUS_NONE
+		var site_i := i
+		region.pressed.connect(func() -> void: _go_region(site_i))
+		box.add_child(region)
+	hud_chrome.add_child(panel)
+	if capture:
+		return
+	hint = Label.new()
+	hint.text = "W drive"
+	hint.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	hint.offset_left = -160.0
+	hint.offset_top = -64.0
+	hint.offset_right = 160.0
+	hint.offset_bottom = -32.0
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui.add_child(hint)
+	var fade := create_tween()
+	fade.tween_interval(2.4)
+	fade.tween_property(hint, "modulate:a", 0.0, 1.4)
+	fade.tween_callback(hint.queue_free)
 
 
-func _go_spawn(site_i: int, spawn_i: int) -> void:
-	if site_i != site_index:
-		_open_site(site_i)
-	var spawn: Dictionary = sites[site_i]["spawns"][spawn_i]
-	var yaw_v := float(spawn.get("yaw", 0.0))
-	var at: Array = spawn["at"]
-	_place(active, float(at[0]), float(at[1]), yaw_v)
-	var other: Node3D = human if active == vehicle else vehicle
-	_place(other, float(at[0]) + 10.0, float(at[1]) - 8.0, yaw_v)
-	terrain.focus = active.global_position
+func _go_region(index: int) -> void:
+	_open_site(index)
 	terrain.ensure_patch(Vector2(active.global_position.x, active.global_position.z))
+	terrain.rebuild_around(active.global_position)
 	camera.snap()
 	camera.hold = false
 	if panel:
 		panel.visible = false
+	if hud_pin == 0:
+		hud_leave_at = Time.get_ticks_msec() / 1000.0 + 1.6
 
 
 func _toggle_menu() -> void:
+	_hud_enter()
 	panel.visible = not panel.visible
-	if panel.visible:
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func _cursor_is_free() -> bool:
+	return Input.mouse_mode == Input.MOUSE_MODE_VISIBLE
+
+
+func _hud_enter() -> void:
+	if not _cursor_is_free() or hud_pin == -1:
+		return
+	hud_goal = 1.0
+	hud_leave_at = -1.0
+
+
+func _hud_leave() -> void:
+	if hud_pin != 0:
+		return
+	hud_leave_at = Time.get_ticks_msec() / 1000.0 + 2.0
+
+
+func _hide_hud_if_auto() -> void:
+	if hud_pin != 0:
+		return
+	hud_goal = 0.0
+	hud_leave_at = -1.0
+	if panel:
+		panel.visible = false
+
+
+func _cycle_hud_pin() -> void:
+	if hud_pin == 0:
+		hud_pin = 1
+		hud_goal = 1.0
+	elif hud_pin == 1:
+		hud_pin = -1
+		hud_goal = 0.0
+		if panel:
+			panel.visible = false
+	else:
+		hud_pin = 0
+		hud_goal = 0.0
+
+
+func _fade_hud(dt: float) -> void:
+	if hud_chrome == null:
+		return
+	if Input.mouse_mode != Input.MOUSE_MODE_VISIBLE and hud_pin == 0:
+		hud_goal = 0.0
+		if panel:
+			panel.visible = false
+	elif hud_pin == 0 and hud_leave_at >= 0.0 and Time.get_ticks_msec() / 1000.0 >= hud_leave_at:
+		hud_goal = 0.0
+		if panel:
+			panel.visible = false
+		hud_leave_at = -1.0
+	elif hud_pin == 1:
+		hud_goal = 1.0
+	elif hud_pin == -1:
+		hud_goal = 0.0
+	hud_alpha = move_toward(hud_alpha, hud_goal, dt * 3.2)
+	hud_chrome.modulate.a = hud_alpha
+	hud_chrome.visible = hud_alpha > 0.04
+
+
+func _show_hud() -> void:
+	hud_pin = 1
+	hud_goal = 1.0
+	hud_alpha = 1.0
+	if hud_chrome:
+		hud_chrome.modulate.a = 1.0
+		hud_chrome.visible = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
 func _grain() -> Texture2D:
@@ -374,6 +521,8 @@ func _read_args() -> void:
 			capture = true
 		if arg == "--bench":
 			bench = true
+		if arg == "--dig-test":
+			dig_test = true
 	if OS.get_environment("ROLEPLAY_CAPTURE") == "1":
 		capture = true
 	if OS.has_feature("web"):
@@ -390,45 +539,111 @@ func _shots() -> void:
 	await get_tree().create_timer(0.2).timeout
 	for _i in 4:
 		await get_tree().process_frame
-	for _warm in 2:
+	_activate("robot")
+	vehicle.blade_angle = -0.5
+	if _take("n1") or _take("hidden"):
+		camera.hold = false
+		camera.snap()
+		await _shot("n1")
+		if _take("hidden"):
+			await _shot("hidden")
+	if _take("hover"):
+		_show_hud()
+		panel.visible = false
 		await get_tree().process_frame
-	print("play fps ", Engine.get_frames_per_second())
-	if shot_from != "ile":
-		if _take("basin-lake"):
-			_frame_lake()
-			await _shot("basin-lake")
-		var dig := shot_only == "" or _take("basin-before-cut") or _take("basin-mid-push") or _take("basin-after-cut") or _take("basin-robot")
-		var show_machine := shot_only == "" or _take("basin-dozer") or dig
-		if not show_machine:
-			var want_later := shot_only == "" or _take("ile-robot") or _take("ile-shore") or _take("ile-human") or _take("ile-heights")
-			if not want_later:
-				print("shots done")
-				get_tree().quit()
-				return
-		if show_machine:
-			await _basin_machine(dig)
-	var want_ile := shot_only == "" or shot_from == "ile" or _take("ile-robot") or _take("ile-shore") or _take("ile-human") or _take("ile-heights")
-	if not want_ile:
-		print("shots done")
-		get_tree().quit()
-		return
-	_open_site(1)
-	for _i in 2:
+		await _shot("hover")
+	if _take("settings"):
+		_show_hud()
+		panel.visible = true
 		await get_tree().process_frame
-	_frame_forest()
-	await _shot("ile-robot")
-	_activate("human")
-	await _shot("ile-human")
-	_go_spawn(1, 2)
-	_activate("human")
-	camera.configure("human")
-	camera.distance = 8.0
-	camera.pitch_up = 0.22
-	await _shot("ile-heights")
-	_stand_on_shore()
-	await _shot("ile-shore")
+		await _shot("settings")
+		panel.visible = false
+	if hud_chrome:
+		hud_pin = -1
+		hud_goal = 0.0
+		hud_alpha = 0.0
+		hud_chrome.modulate.a = 0.0
+		hud_chrome.visible = false
+		if panel:
+			panel.visible = false
+	if _take("dig-before") or _take("dig-after"):
+		camera.hold = false
+		camera.snap()
+		var fwd := vehicle.forward()
+		await _frame_dozer(fwd)
+		await _shot("dig-before")
+		vehicle.freeze = false
+		vehicle.set_physics_process(true)
+		shot_drive = true
+		vehicle.blade_angle = -0.55
+		var walked := 0.0
+		while walked < 4.0:
+			await get_tree().physics_frame
+			walked += get_physics_process_delta_time()
+		shot_drive = false
+		vehicle.throttle = 0.0
+		vehicle.set_physics_process(false)
+		fwd = vehicle.forward()
+		await _frame_trench(fwd, 0.0)
+		await _shot("dig-after")
+	for i in range(1, sites.size()):
+		var key := "n%d" % (i + 1)
+		if not _take(key):
+			continue
+		_open_site(i)
+		_activate("robot")
+		camera.hold = false
+		camera.snap()
+		for _i in 3:
+			await get_tree().process_frame
+		await _shot(key)
 	print("shots done")
 	get_tree().quit()
+
+
+func _run_dig_test() -> void:
+	vehicle.freeze = false
+	vehicle.blade_angle = -0.55
+	vehicle.throttle = 1.0
+	vehicle.steer = 0.0
+	await get_tree().physics_frame
+	var origin_before := terrain.patch.origin
+	var before := _coarse_sum()
+	var probe := vehicle.global_position
+	var fwd0 := vehicle.forward()
+	var probes: Array[float] = []
+	for i in 16:
+		var p := probe + fwd0 * (1.5 + float(i) * 0.7)
+		probes.append(terrain.sample(p.x, p.z))
+	var elapsed := 0.0
+	while elapsed < 5.0:
+		await get_tree().physics_frame
+		elapsed += get_physics_process_delta_time()
+	terrain.patch.bake()
+	var after := _coarse_sum()
+	var changed := 0
+	for i in 16:
+		var p := probe + fwd0 * (1.5 + float(i) * 0.7)
+		if absf(terrain.sample(p.x, p.z) - probes[i]) > 0.02:
+			changed += 1
+	var cut: float = terrain.patch.field.cut_m3
+	var fill: float = terrain.patch.field.fill_m3
+	var conserved := absf(after - before) < 8.0 and absf(cut - fill) < 0.05
+	var dug := changed >= 3 and cut > 0.05
+	print("dig-test seconds %.2f changed %d coarse %.4f -> %.4f cut %.3f fill %.3f origin %s -> %s" % [elapsed, changed, before, after, cut, fill, origin_before, terrain.patch.origin])
+	if dug and conserved:
+		print("dig-test ok")
+		get_tree().quit(0)
+	else:
+		print("dig-test FAIL")
+		get_tree().quit(1)
+
+
+func _coarse_sum() -> float:
+	var total := 0.0
+	for h in terrain.field.heights:
+		total += h
+	return total
 
 
 func _basin_machine(dig: bool) -> void:

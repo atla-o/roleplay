@@ -46,13 +46,15 @@ The playable build in `godot/` is [Godot Engine](https://godotengine.org/) 4.7 (
 
 ## Godot ground
 
-The Godot project uses the measured 2 m posts, not the older 120 m island mosaic.
+The playable world is three 2 m tiles. The outer few hundred metres of each square are lowered toward the water along a wandering line so the horizon is a shore. That fringe is not a second survey. The interior posts are the measured DEM.
 
-Polar Desert Basin is ArcticDEM v4.1 at native 2 m, southwest corner EPSG:3413 X −1,116,740 m, Y −1,136,008 m, 2000 by 2000 posts. Elevations run from 66.60 m to 279.48 m. The machine starts near 2720 m east and 2700 m north of that corner, on a measured slope where the Sentinel-2 picture has contrast.
+Northern 1 — Canada is ArcticDEM v4.1 at native 2 m, southwest corner EPSG:3413 X −1,116,740 m, Y −1,136,008 m, 2000 by 2000 posts. The machine starts on a flat bench inland of the water, near 1936 m east and 1568 m north of that corner.
 
-Île René-Levasseur's near ground is the western shore in NRCan HRDEM project `Lac_Pletipi_2024`, tile `dtm_1m_utm19_w_0_169`, averaged from 1 m to 2 m. Southwest corner UTM zone 19, 491800 E, 5696000 N. Elevations on that square run from 348.29 m to 616.30 m. Posts the lidar left empty are filled with 348.59 m, the measured water surface. The playable island continues past that square at 40 m: HRDEM mosaic `9_4-mosaic-1m-dtm` where the lidar exists (about 98 percent of the window), otherwise NRCan MRDEM-30, whose inputs include Copernicus GLO-30. Both are Open Government Licence – Canada. The mesh is the land connected to the island above the reservoir. Beyond that shoreline the view is water, not a cut square and not the crater rim outside the ring. ArcticDEM does not cover 51°N.
+Northern 2 — Europe is ArcticDEM v4.1 at 2 m on the west coast of Svalbard, a 4 km window in EPSG:32633 centred near 78.049°N, 13.644°E (mosaic tiles `34_51_1_2_2m_v4.1` and `34_52_1_1_2m_v4.1`). The machine starts on the coastal flat.
 
-Color on both squares is Sentinel-2 cloudless from EOX (CC BY 4.0), containing modified Copernicus Sentinel data. The island mosaic is the 2020 cloudless file multiplied by 3 so boreal canopy is not stored as a near-black reflectance value. The basin mosaic is the 2021 file, unchanged.
+Northern 3 — Russia is ArcticDEM v4.1 at 2 m on the west coast of Yamal, a 4 km window in EPSG:32642 centred near 70.493°N, 67.913°E (mosaic tile `49_60_1_2_2m_v4.1`). The machine starts on the tundra above the sea.
+
+Color on the three tiles is Sentinel-2 cloudless from EOX (CC BY 4.0), containing modified Copernicus Sentinel data. Canada uses the 2021 file. Europe and Russia use the 2021 tiles, with the 2020 file as a fallback if a tile is missing.
 
 An apron around each square eases from the measured edge posts toward one sample of the Mapzen/Tilezen terrarium DEM (zoom 5): 144 m at the basin and 348 m at the island. That apron is not a second elevation survey. A repeating shading grain, generated here, is a few centimetres of normal perturbation. It does not move the posts.
 

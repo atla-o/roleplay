@@ -366,34 +366,15 @@ func _paint_blade(node: Node) -> void:
 		var mi := node as MeshInstance3D
 		# The moldboard mesh also carries small grey plates on its back.
 		# Keep the broad faces and drop those short ribs.
-		var src := mi.mesh
-		if src != null:
-			var out := ArrayMesh.new()
-			for s in src.get_surface_count():
-				var arrays: Array = src.surface_get_arrays(s)
-				var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-				var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-				var kept := PackedInt32Array()
-				var i := 0
-				while i + 2 < indices.size():
-					var a: Vector3 = verts[indices[i]]
-					var b: Vector3 = verts[indices[i + 1]]
-					var c: Vector3 = verts[indices[i + 2]]
-					var span := maxf(a.distance_to(b), maxf(b.distance_to(c), c.distance_to(a)))
-					if span > 0.45:
-						kept.append(indices[i])
-						kept.append(indices[i + 1])
-						kept.append(indices[i + 2])
-					i += 3
-				arrays[Mesh.ARRAY_INDEX] = kept
-				out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-				var mat := src.surface_get_material(s)
-				if mat is StandardMaterial3D:
-					var painted := (mat as StandardMaterial3D).duplicate() as StandardMaterial3D
-					painted.albedo_color = Color(0.93, 0.76, 0.1)
-					painted.roughness = 0.55
-					out.surface_set_material(out.get_surface_count() - 1, painted)
-			mi.mesh = out
+		for s in mi.mesh.get_surface_count():
+			var mat := mi.get_active_material(s)
+			if mat is StandardMaterial3D:
+				var painted := (mat as StandardMaterial3D).duplicate() as StandardMaterial3D
+				painted.albedo_color = Color(0.93, 0.76, 0.12)
+				painted.roughness = 0.55
+				painted.cull_mode = BaseMaterial3D.CULL_DISABLED
+				painted.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+				mi.set_surface_override_material(s, painted)
 	for child in node.get_children():
 		_paint_blade(child)
 

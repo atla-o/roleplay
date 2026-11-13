@@ -1,26 +1,18 @@
 {
   "sites": [
     {
-      "id": "polar-desert-basin",
-      "name": "Polar Desert Basin",
+      "id": "northern-1",
+      "name": "Northern 1 — Canada",
       "heights": "basin.f32",
       "color": "basin_color.jpg",
       "cols": 2000,
       "rows": 2000,
       "spacing": 2.0,
-      "hmin": 66.6015625,
-      "hmax": 279.484375,
+      "hmin": 68.330719,
+      "hmax": 273.656769,
       "repose": 35.0,
-      "spawn": [
-        2720.0,
-        2700.0
-      ],
-      "spawns": [
-        {"name": "Slope", "at": [2720.0, 2700.0], "yaw": 0.0},
-        {"name": "Ridge", "at": [3198.0, 3088.0], "yaw": 3.4},
-        {"name": "Low ground", "at": [1600.0, 1600.0], "yaw": 0.6},
-        {"name": "Lake", "at": [3854.0, 3806.0], "yaw": 0.8}
-      ],
+      "spawn": [1936.0, 1568.0],
+      "yaw": 0.0,
       "water": 74.0,
       "outer_m": 144.0,
       "forest": false,
@@ -28,38 +20,42 @@
       "lon": -89.5091
     },
     {
-      "id": "rene-levasseur",
-      "name": "\u00cele Ren\u00e9-Levasseur",
-      "heights": "ile.f32",
-      "color": "ile_color.jpg",
+      "id": "northern-2",
+      "name": "Northern 2 — Europe",
+      "heights": "europe.f32",
+      "color": "europe_color.jpg",
       "cols": 2000,
       "rows": 2000,
       "spacing": 2.0,
-      "hmin": 348.2874755859375,
-      "hmax": 616.302490234375,
-      "repose": 32.0,
-      "spawn": [
-        2200.0,
-        1600.0
-      ],
-      "spawns": [
-        {"name": "Forest", "at": [2200.0, 1600.0], "yaw": 0.0},
-        {"name": "Shore", "at": [2000.0, 2320.0], "yaw": 0.0},
-        {"name": "Heights", "at": [3600.0, 2000.0], "yaw": -1.57}
-      ],
-      "ring": {
-        "heights": "ile_ring.f32",
-        "mask": "ile_ring_mask.u8",
-        "cols": 1906,
-        "rows": 2094,
-        "spacing": 40.0,
-        "origin": [-9360.0, -46160.0]
-      },
-      "water": 348.59,
-      "outer_m": 348.0,
-      "forest": true,
-      "lat": 51.4332,
-      "lon": -69.0892
+      "hmin": 29.0,
+      "hmax": 69.748154,
+      "repose": 34.0,
+      "spawn": [958.0, 1264.0],
+      "yaw": 0.0,
+      "water": 34.0,
+      "outer_m": 34.0,
+      "forest": false,
+      "lat": 78.04862,
+      "lon": 13.6441
+    },
+    {
+      "id": "northern-3",
+      "name": "Northern 3 — Russia",
+      "heights": "russia.f32",
+      "color": "russia_color.jpg",
+      "cols": 2000,
+      "rows": 2000,
+      "spacing": 2.0,
+      "hmin": -11.43,
+      "hmax": 11.951446,
+      "repose": 34.0,
+      "spawn": [3134.0, 3384.0],
+      "yaw": 0.0,
+      "water": -6.43,
+      "outer_m": 0.0,
+      "forest": false,
+      "lat": 70.49304,
+      "lon": 67.91264
     }
   ]
 }

@@ -650,7 +650,7 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 		var pz := float(r) * spacing
 		positions.append(Vector3(px, _shore_height(c, r) + drop, pz))
 		uvs.append(Vector2(float(c) / cols_f, float(r) / rows_f))
-		var step_n := 2
+		var step_n := 6
 		var hl: float = field.height_at(c - step_n, r)
 		var hr: float = field.height_at(c + step_n, r)
 		var hd: float = field.height_at(c, r - step_n)

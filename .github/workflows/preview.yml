@@ -100,9 +100,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y xvfb
-          rm -rf /tmp/roleplay-smoke
-          mkdir -p /tmp/roleplay-smoke
+          sudo apt-get install -y xvfb x11-utils
+          rm -rf /tmp/roleplay-smoke /tmp/roleplay-home
+          mkdir -p /tmp/roleplay-smoke /tmp/roleplay-home
           tar -C /tmp/roleplay-smoke -xzf "build/${{ matrix.tarball }}"
           cd /tmp/roleplay-smoke/roleplay-linux-${{ matrix.label }}
           # Compatibility is what this runner can draw. Forward+ has no Vulkan here.
@@ -114,6 +114,42 @@ jobs:
           fi
           grep -E "site |dozer aabb" /tmp/roleplay-smoke/launch.log
           echo "x86_64 launch ok"
+          # Install into a throwaway home and start the real launcher.
+          export HOME=/tmp/roleplay-home
+          ./install.sh
+          test -x "$HOME/.local/bin/roleplay"
+          test -f "$HOME/.local/share/applications/roleplay.desktop"
+          test -f "$HOME/.local/share/icons/hicolor/256x256/apps/roleplay.png"
+          test -f "$HOME/.local/share/icons/hicolor/512x512/apps/roleplay.png"
+          test -x "$HOME/.local/share/roleplay/run.sh"
+          test -x "$HOME/.local/share/roleplay/run-compat.sh"
+          grep -q 'StartupWMClass=roleplay' "$HOME/.local/share/applications/roleplay.desktop"
+          xvfb-run -a bash -c '
+            set -eu
+            "$HOME/.local/bin/roleplay" --quit-after 25 >/tmp/roleplay-install-launch.log 2>&1 &
+            pid=$!
+            found=0
+            for _i in $(seq 1 50); do
+              if xwininfo -root -tree 2>/dev/null | grep -q Roleplay; then
+                echo "---- xprop ----"
+                xprop -name Roleplay WM_CLASS WM_NAME
+                found=1
+                break
+              fi
+              if ! kill -0 "$pid" 2>/dev/null; then
+                break
+              fi
+              sleep 0.5
+            done
+            wait "$pid" || true
+            test "$found" = 1
+          '
+          if grep -E -q "SCRIPT ERROR|Parse Error" "$HOME/.local/share/roleplay/roleplay.log"; then
+            echo "script error after install"
+            cat "$HOME/.local/share/roleplay/roleplay.log"
+            exit 1
+          fi
+          echo "install.sh ok"
 
       - name: Upload tarball
         uses: actions/upload-artifact@v4
@@ -160,6 +196,9 @@ jobs:
 
       - name: Conservation test
         run: /opt/godot/godot --headless --path godot -s res://tests/conservation.gd
+
+      - name: Dig test
+        run: /opt/godot/godot --headless --path godot -- --dig-test
 
       - name: Export web preview
         run: |

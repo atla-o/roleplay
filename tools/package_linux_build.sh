@@ -64,25 +64,41 @@ exec "./$BIN_NAME" --rendering-driver opengl3 --rendering-method gl_compatibilit
 EOF
 chmod 755 "$ROOT/run.sh" "$ROOT/run-compat.sh"
 
+PACK=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)/packaging
+cp "$PACK/roleplay.desktop" "$ROOT/roleplay.desktop"
+cp "$PACK/install.sh" "$ROOT/install.sh"
+cp "$PACK/uninstall.sh" "$ROOT/uninstall.sh"
+chmod 755 "$ROOT/install.sh" "$ROOT/uninstall.sh"
+mkdir -p "$ROOT/icons/hicolor/256x256/apps" "$ROOT/icons/hicolor/512x512/apps"
+cp "$PACK/icons/hicolor/256x256/apps/roleplay.png" "$ROOT/icons/hicolor/256x256/apps/roleplay.png"
+cp "$PACK/icons/hicolor/512x512/apps/roleplay.png" "$ROOT/icons/hicolor/512x512/apps/roleplay.png"
+
 cat > "$ROOT/README.txt" << EOF
 Roleplay for Linux ($ARCH_LABEL)
 Godot 4.7.2. The terrain is inside this build. Nothing is downloaded on first run.
+The window class is roleplay. The title is Roleplay.
 
-Run
+Install for this user
+  ./install.sh
+That copies the game to ~/.local/share/roleplay, puts a launcher at
+~/.local/bin/roleplay (any file already there is saved as roleplay.bak),
+and installs the desktop entry and icons. Remove it with ./uninstall.sh.
+
+Run without installing
   ./run.sh
 If the window stays black (Asahi Honeykrisp, or a machine without Vulkan):
   ./run-compat.sh
-That forces the OpenGL 3 Compatibility renderer. Logs go to roleplay.log
-next to this file.
+The installed launcher uses the same Vulkan-then-OpenGL fallback.
+Logs go to roleplay.log next to the game.
 
 Controls
-  Robot: W throttle, S reverse, A and D steer.
-  Blade: Q raises, E lowers. Z and C tilt the blade.
-  Mouse or the right stick orbits the chase camera.
-  Human: WASD, Shift to run, Space to jump.
-  Settings is the button at the bottom left. It switches Robot and Human
-  and teleports to named places (basin Slope, Ridge, Low ground, Lake;
-  island Forest, Shore, Heights). Esc closes it.
+  You start in the dozer on Northern 1 — Canada. W drives, and the blade
+  is already down, so the ground moves.
+  S reverse, A and D steer. Q raises the blade, E lowers it.
+  Move the mouse to the top edge to show Settings. H or Tab pins it
+  shown, then hidden, then back to hover. Esc releases the mouse.
+  Settings switches Robot and Human, and teleports to Northern 1 — Canada,
+  Northern 2 — Europe, or Northern 3 — Russia.
 
 Benchmark
   ./run.sh --bench

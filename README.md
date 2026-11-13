@@ -8,8 +8,8 @@ Controls are the same on Linux and in the browser.
 
 - **Robot.** W throttle, S brake into reverse, A and D steer. Q raises the blade, E lowers it. Hold the left mouse button to lower the blade and the right button to raise it. The mouse, or the right stick, orbits the chase camera. It recenters after about a second and a half.
 - **Human.** A 1.8 m person, camera behind them. WASD walks, Shift runs, Space jumps. Walk, run and idle come from the character's animation clips.
-- **Settings.** One button, bottom left. It switches Robot and Human, and teleports to named places on the basin and the island. Esc closes it. Nothing else is drawn on screen. `?capture=1` on the web build, or `--capture`, hides the button.
-- **Water.** On the island the ground ends at the reservoir. Shallows slow you. Deeper water stops you. There is no wall at the old square.
+- **Settings.** Nothing is on screen until the mouse, with a free cursor, touches the top edge. Settings then fades in, and fades out a couple of seconds after the pointer leaves. H or Tab pins it shown, then hidden, then back to hover. It switches Robot and Human, and teleports to Northern 1 — Canada, Northern 2 — Europe, or Northern 3 — Russia. Esc releases the mouse.
+- **Water.** Shallows slow you. Deeper water stops you. The outer ground falls toward the water so the tile is not a square wall.
 - **Gamepad.** Left stick drives, triggers throttle and reverse, bumpers move the blade, right stick looks, bottom face button jumps.
 
 ```bash

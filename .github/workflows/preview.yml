@@ -194,11 +194,14 @@ jobs:
             cp -a /tmp/godot-templates/templates/. "$TEMPLATE_DIR/"
           fi
 
+      - name: Import project
+        run: /opt/godot/godot --headless --path godot --import --quit
+
       - name: Conservation test
         run: /opt/godot/godot --headless --path godot -s res://tests/conservation.gd
 
       - name: Dig test
-        run: /opt/godot/godot --headless --path godot -- --dig-test
+        run: timeout 240 /opt/godot/godot --headless --path godot -- --dig-test
 
       - name: Export web preview
         run: |

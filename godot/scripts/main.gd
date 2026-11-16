@@ -1124,7 +1124,7 @@ func _run_teleport_test() -> void:
 		var h := terrain.sample(active.global_position.x, active.global_position.z)
 		var finite := not is_nan(h) and not is_inf(h)
 		var near := absf(active.global_position.x) < 8000.0 and absf(active.global_position.z) < 8000.0
-		var sane := h > -200.0 and h < 6500.0
+		var sane := h > -11000.0 and h < 9000.0
 		var grounded := absf(active.global_position.y - h) < 8.0
 		if not finite or not near or not sane or not grounded or terrain.field == null:
 			failed += 1

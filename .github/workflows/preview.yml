@@ -203,6 +203,9 @@ jobs:
       - name: Dig test
         run: timeout 240 /opt/godot/godot --headless --path godot -- --dig-test
 
+      - name: Camera test
+        run: timeout 240 /opt/godot/godot --headless --path godot -- --camera-test
+
       - name: Teleport test
         run: timeout 480 /opt/godot/godot --headless --path godot -- --teleport-test
 

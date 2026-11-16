@@ -203,7 +203,7 @@ func _place_boreal(terrain: TerrainWorld, cover: Image) -> void:
 				var rh := terrain.sample(east, north)
 				if rh > water + 0.4:
 					rocks.append(_xf(east, rh - 0.15, north, _hash(x, y + 4) * TAU, 0.45 + _hash(x + 6, y) * 1.1))
-			if dist < 90.0 and shrubs.size() < 420 and shore < 0.7 and (tree > 0.15 or px.b > 0.25) and _hash(x, y + 9) > 0.62:
+			if dist < 200.0 and shrubs.size() < 700 and shore < 0.85 and (tree > 0.08 or px.g > 0.18 or px.b > 0.22) and _hash(x, y + 9) > 0.4:
 				var sh := terrain.sample(east, north)
 				if sh > water + 1.2:
 					shrubs.append(_xf(east, sh, north, _hash(x + 1, y) * TAU, 0.7 + _hash(x, y + 5) * 0.8))

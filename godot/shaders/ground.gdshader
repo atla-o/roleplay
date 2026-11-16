@@ -56,6 +56,17 @@ vec3 once(sampler2D tex, vec2 uv) {
 	return texture(tex, uv * 0.41 + o).rgb;
 }
 
+float value_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = hash12(i);
+	float b = hash12(i + vec2(1.0, 0.0));
+	float c = hash12(i + vec2(0.0, 1.0));
+	float d = hash12(i + vec2(1.0, 1.0));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
 vec3 triplanar_color(sampler2D tex, vec3 p, vec3 n, float scale) {
 	vec3 b = pow(abs(n), vec3(4.0));
 	b /= max(b.x + b.y + b.z, 0.0001);
@@ -111,21 +122,31 @@ void fragment() {
 		vec3 moss = stochastic(forest_alb, world_pos.xz * 0.24);
 		vec3 lichen_c = stochastic(leaves_alb, world_pos.xz * 0.16);
 		vec3 granite = once(rock_alb, world_pos.xz * 0.11);
-		vec3 stones = once(gravel_alb, world_pos.xz * 0.2);
+		// Patches tens of metres across, so the detail tile cannot read as a grid.
+		float patch_m = value_noise(world_pos.xz * 0.035);
+		float patch_l = value_noise(world_pos.xz * 0.011);
+		vec3 stones_a = once(gravel_alb, world_pos.xz * 0.22);
+		vec3 stones_b = once(gravel_alb, world_pos.xz * 0.07 + vec2(3.0, 1.0));
+		vec3 stones = mix(stones_a, stones_b, patch_m);
 		vec3 peat = once(mud_alb, world_pos.xz * 0.13);
 		vec3 burn = once(shore_alb, world_pos.xz * 0.09);
-		float rock_w = clamp(cover.g + smoothstep(0.3, 0.62, slope), 0.0, 1.0);
-		detail = mix(moss, mix(lichen_c, granite, smoothstep(0.12, 0.5, slope)), rock_w);
-		detail = mix(detail, peat, cover.b);
-		detail = mix(detail, stones, cover.a * (1.0 - slope));
-		float burn_w = smoothstep(0.16, 0.045, sat_l) * (1.0 - cover.a) * (1.0 - cover.b) * step(0.25, cover.r);
-		detail = mix(detail, burn, burn_w * 0.8);
-		float macro = once(forest_alb, world_pos.xz * 0.035).g;
-		float broad = once(rock_alb, world_pos.xz * 0.008).g;
-		detail *= 0.7 + macro * 0.45;
-		detail = mix(detail, detail * vec3(0.78, 0.84, 0.7), broad * 0.65);
-		float open = max(rock_w, cover.a);
-		alb = mix(detail, sat, mix(0.06, 0.28, open));
+		float above = 99.0;
+		if (water_y > -100.0) {
+			above = world_pos.y - water_y;
+		}
+		float shore_h = (1.0 - smoothstep(0.3, 5.5, above)) * (1.0 - smoothstep(0.05, 0.45, slope));
+		float rock_w = clamp(cover.g + smoothstep(0.28, 0.58, slope), 0.0, 1.0);
+		float lichen_patch = smoothstep(0.58, 0.86, patch_l) * (1.0 - shore_h) * (1.0 - smoothstep(0.2, 0.5, slope));
+		rock_w = clamp(rock_w + lichen_patch * 0.85 + cover.g, 0.0, 1.0);
+		float bog = clamp(cover.b + smoothstep(0.72, 0.9, patch_m) * (1.0 - smoothstep(2.0, 8.0, above)) * (1.0 - slope) * 0.55, 0.0, 1.0);
+		detail = mix(moss, mix(lichen_c, granite, smoothstep(0.1, 0.48, slope)), rock_w);
+		detail = mix(detail, peat, bog);
+		detail = mix(detail, stones, max(cover.a, shore_h) * (1.0 - slope * 0.5));
+		float burn_w = smoothstep(0.18, 0.05, sat_l) * (1.0 - shore_h) * (1.0 - bog) * step(0.2, cover.r);
+		detail = mix(detail, burn, burn_w * 0.85);
+		detail *= 0.62 + patch_m * 0.28 + patch_l * 0.28;
+		float open = max(rock_w, max(shore_h, bog));
+		alb = mix(detail, sat, mix(0.05, 0.22, open));
 		if (detail_fade > 0.15) {
 			vec3 ntex = once(forest_nrm, world_pos.xz * 0.24) * 2.0 - 1.0;
 			vec3 rtex = once(rock_nrm, world_pos.xz * 0.11) * 2.0 - 1.0;

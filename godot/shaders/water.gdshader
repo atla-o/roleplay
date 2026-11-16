@@ -46,7 +46,7 @@ float bed_near(vec2 uv, float center) {
 
 void vertex() {
 	vec3 p = VERTEX;
-	float swell = sin(p.x * 0.028 + TIME * 0.5) * 0.1 + sin(p.z * 0.016 - TIME * 0.33) * 0.07;
+	float swell = sin(p.x * 0.02 + TIME * 0.45) * 0.22 + sin(p.z * 0.013 - TIME * 0.3) * 0.16;
 	float local = 1.0 - smoothstep(2200.0, 5200.0, length(p.xz));
 	p.y += swell * local;
 	VERTEX = p;
@@ -72,13 +72,14 @@ void fragment() {
 	float sheet = (1.0 - smoothstep(0.25, 2.8, rise)) * (1.0 - smoothstep(0.15, 2.2, abs(water_y - raw)));
 	float shown = mix(depth, 6.0, sheet);
 
-	float w1 = sin(world_pos.x * 0.04 + world_pos.z * 0.018 + TIME * 0.25);
-	float w2 = sin(world_pos.z * 0.035 - TIME * 0.18);
-	vec3 wn = normalize(vec3(-w1 * 0.008, 1.0, -w2 * 0.008));
+	float w1 = sin(world_pos.x * 0.05 + world_pos.z * 0.02 + TIME * 0.35);
+	float w2 = sin(world_pos.z * 0.04 - TIME * 0.22);
+	float w3 = sin((world_pos.x + world_pos.z) * 0.015 + TIME * 0.15);
+	vec3 wn = normalize(vec3(-w1 * 0.035 - w3 * 0.02, 1.0, -w2 * 0.03));
 
-	vec3 shallow = vec3(0.16, 0.28, 0.28);
-	vec3 deep = vec3(0.05, 0.12, 0.16);
-	vec3 water = mix(shallow, deep, smoothstep(0.2, 4.0, shown));
+	vec3 shallow = vec3(0.22, 0.32, 0.28);
+	vec3 deep = vec3(0.04, 0.09, 0.13);
+	vec3 water = mix(shallow, deep, smoothstep(0.15, 5.0, shown));
 
 	vec3 view_w = normalize(CAMERA_POSITION_WORLD - world_pos);
 	vec3 refl = reflect(-view_w, wn);
@@ -91,8 +92,8 @@ void fragment() {
 		color = mix(color, mirror, fres * 0.28);
 	}
 
-	float foam = (1.0 - smoothstep(0.0, 1.8, depth)) * (1.0 - smoothstep(0.1, 0.9, sheet));
-	float lip = smoothstep(0.0, 0.12, depth) * (1.0 - smoothstep(0.12, 0.7, depth));
+	float foam = (1.0 - smoothstep(0.0, 3.2, depth)) * (1.0 - smoothstep(0.05, 1.2, sheet));
+	float lip = smoothstep(0.0, 0.2, depth) * (1.0 - smoothstep(0.2, 1.3, depth));
 	float broken = step(0.42, hash21(floor(world_pos.xz * 0.35)));
 	color = mix(color, vec3(0.55, 0.62, 0.6), foam * 0.35 * broken);
 	color = mix(color, vec3(0.78, 0.82, 0.8), lip * 0.65);

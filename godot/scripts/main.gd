@@ -35,6 +35,8 @@ var recent_box: VBoxContainer
 var recent: Array = []
 var map_test := false
 var teleport_test := false
+var camera_test := false
+var camera_time := 0.0
 var manipulate_label: Label
 
 func _ready() -> void:
@@ -42,15 +44,17 @@ func _ready() -> void:
 	_read_args()
 	_world()
 	terrain = TerrainWorld.new()
-	terrain.persist = not dig_test and not map_test and not teleport_test and shot_dir == "" and not bench
+	terrain.persist = not dig_test and not map_test and not teleport_test and not camera_test and shot_dir == "" and not bench
 	add_child(terrain)
 	foliage = Foliage.new()
 	add_child(foliage)
 	vehicle = TrackedVehicle.new()
 	vehicle.terrain = terrain
+	vehicle.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	add_child(vehicle)
 	human = Walker.new()
 	human.terrain = terrain
+	human.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	add_child(human)
 	camera = ChaseCamera.new()
 	camera.terrain = terrain
@@ -65,6 +69,9 @@ func _ready() -> void:
 		return
 	if teleport_test:
 		_run_teleport_test()
+		return
+	if camera_test:
+		_run_camera_test()
 		return
 	if shot_dir != "":
 		_shots()
@@ -149,6 +156,12 @@ func _process(dt: float) -> void:
 		throttle = 1.0
 		steer = 0.0
 		lower = true
+	if camera_test:
+		camera_time += dt
+		throttle = 0.9
+		steer = sin(camera_time * 1.7)
+		if fmod(camera_time, 5.0) < 0.4:
+			steer = 1.0 if sin(camera_time * 0.7) > 0.0 else -1.0
 	if kind == "robot":
 		vehicle.throttle = clampf(throttle, -1.0, 1.0)
 		vehicle.steer = clampf(steer, -1.0, 1.0)
@@ -182,10 +195,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton and event.pressed and (panel == null or not panel.visible):
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			camera.distance = clampf(camera.distance / 1.12, 8.0, 42.0)
+			camera.cycle_zoom(-1)
 			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			camera.distance = clampf(camera.distance * 1.12, 8.0, 42.0)
+			camera.cycle_zoom(1)
 			get_viewport().set_input_as_handled()
 	if event is InputEventKey and event.pressed and not event.echo and panel and panel.visible:
 		var key := event as InputEventKey
@@ -221,13 +234,13 @@ func _world() -> void:
 	env.tonemap_exposure = 0.84
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-	env.fog_density = 0.00012
-	env.fog_aerial_perspective = 0.35
+	env.fog_density = 0.00015
+	env.fog_aerial_perspective = 0.45
 	env.fog_light_color = Color(0.70, 0.76, 0.8)
-	env.fog_sun_scatter = 0.04
-	# Thicker near the reservoir surface, thinner on the bench.
-	env.fog_height = 348.0
-	env.fog_height_density = 0.006
+	env.fog_sun_scatter = 0.05
+	# Denser below the bench, so the reservoir carries the mist.
+	env.fog_height = 351.5
+	env.fog_height_density = 0.045
 	if RenderingServer.get_current_rendering_method() == "forward_plus":
 		env.ssao_enabled = true
 		env.ssao_radius = 1.1
@@ -638,9 +651,17 @@ func _teleport_pin() -> void:
 		_close_menu()
 		return
 	var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/north.json"))
-	if meta == null:
+	if meta == null or lat < 45.0:
+		_flash_notice("Coming soon")
 		return
 	var landed: Dictionary = terrain.open_north(meta, lat, lon, _grain())
+	if landed.is_empty() or terrain.field == null:
+		_flash_notice("Coming soon")
+		return
+	var landed_h := terrain.sample(float(landed["x"]), float(landed["z"]))
+	if is_nan(landed_h) or is_inf(landed_h):
+		_flash_notice("Coming soon")
+		return
 	foliage.rebuild(terrain, terrain.color_tex)
 	var yaw_v := 0.0
 	_place(vehicle, float(landed["x"]), float(landed["z"]), yaw_v)
@@ -730,6 +751,18 @@ func _mark_map() -> void:
 	north_map.set_marks([])
 
 
+func _frame_spot(at: Vector3, look: Vector3, eye: float) -> void:
+	vehicle.visible = false
+	var ground_y := terrain.sample(at.x, at.z)
+	vehicle.global_position = Vector3(at.x, ground_y + 0.6, at.z)
+	camera.hold = true
+	camera.camera.global_position = Vector3(at.x, ground_y + eye, at.z)
+	var look_y := terrain.sample(look.x, look.z)
+	camera.camera.look_at(Vector3(look.x, look_y + 1.6, look.z), Vector3.UP)
+	terrain.focus = camera.camera.global_position
+	terrain.rebuild_around(camera.camera.global_position)
+
+
 func _frame_reservoir() -> void:
 	var origin := vehicle.global_position
 	# The reservoir is west of this bench. Look that way, from just above the moss.
@@ -745,7 +778,7 @@ func _frame_spawn_shot() -> void:
 	var fwd := vehicle.forward()
 	camera.hold = true
 	var pitch := camera.pitch_up
-	var focus := vehicle.global_position + fwd * camera.look_ahead + Vector3.UP * camera.look_height
+	var focus := vehicle.global_position + fwd * 7.5 + Vector3.UP * camera.anchor_lift
 	camera.camera.global_position = focus - fwd * camera.distance * cos(pitch) + Vector3.UP * camera.distance * sin(pitch)
 	camera.camera.look_at(focus, Vector3.UP)
 
@@ -864,6 +897,8 @@ func _read_args() -> void:
 			map_test = true
 		if arg == "--teleport-test":
 			teleport_test = true
+		if arg == "--camera-test":
+			camera_test = true
 	if OS.get_environment("ROLEPLAY_CAPTURE") == "1":
 		capture = true
 	if OS.has_feature("web"):
@@ -913,6 +948,16 @@ func _shots() -> void:
 					await get_tree().process_frame
 				await _shot("island-shore")
 			_open_menu()
+	if _take("cmp-shore") or _take("cmp-forest") or _take("cmp-rock"):
+		if _take("cmp-shore"):
+			_frame_spot(Vector3(2240.0, 0.0, 3160.0), Vector3(2050.0, 0.0, 3000.0), 4.2)
+			await _shot("cmp-shore")
+		if _take("cmp-forest"):
+			_frame_spot(Vector3(2268.0, 0.0, 2980.0), Vector3(2480.0, 0.0, 3140.0), 6.5)
+			await _shot("cmp-forest")
+		if _take("cmp-rock"):
+			_frame_spot(Vector3(2540.0, 0.0, 920.0), Vector3(2465.0, 0.0, 790.0), 14.0)
+			await _shot("cmp-rock")
 			for _frame3 in 2:
 				await get_tree().process_frame
 		if _take("map-svalbard"):
@@ -1013,12 +1058,57 @@ func _run_teleport_test() -> void:
 	get_tree().quit(0 if failed == 0 else 1)
 
 
-func _flash_manipulate() -> void:
+func _flash_notice(text: String) -> void:
 	if manipulate_label == null:
 		return
-	manipulate_label.text = "Blade down" if vehicle.manipulate else "Blade up"
+	manipulate_label.text = text
 	manipulate_label.modulate.a = 1.0
 	manipulate_label.visible = true
+
+
+func _flash_manipulate() -> void:
+	_flash_notice("Blade down" if vehicle.manipulate else "Blade up")
+
+
+func _run_camera_test() -> void:
+	vehicle.freeze = false
+	vehicle.set_manipulate(false)
+	camera.hold = false
+	camera.snap()
+	var vp := get_viewport().get_visible_rect().size
+	if vp.x < 16.0:
+		vp = Vector2(1280.0, 720.0)
+	var worst := 0.0
+	var lock := Vector2.ZERO
+	var locked := false
+	var elapsed := 0.0
+	var samples := 0
+	while elapsed < 30.0:
+		await get_tree().physics_frame
+		await get_tree().process_frame
+		elapsed += get_physics_process_delta_time()
+		var body := vehicle.global_position + Vector3.UP * camera.anchor_lift
+		var screen := camera.screen_of(body)
+		if not locked and elapsed > 0.8:
+			lock = screen
+			locked = true
+			var nx := screen.x / vp.x
+			var ny := screen.y / vp.y
+			print("camera lock ", snappedf(nx, 0.001), " ", snappedf(ny, 0.001), " px ", screen)
+			if ny < 0.53 or absf(nx - 0.5) > 0.06:
+				print("camera-test FAIL lock is not below center")
+				get_tree().quit(1)
+				return
+		if locked:
+			var err := screen.distance_to(lock)
+			worst = maxf(worst, err)
+			samples += 1
+			if err > 16.0:
+				print("camera-test FAIL drift ", snappedf(err, 0.1), " px at ", snappedf(elapsed, 0.01))
+				get_tree().quit(1)
+				return
+	print("camera-test ok samples ", samples, " worst_px ", snappedf(worst, 0.01))
+	get_tree().quit(0)
 
 
 func _run_dig_test() -> void:

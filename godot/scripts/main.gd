@@ -36,6 +36,8 @@ var recent: Array = []
 var map_test := false
 var teleport_test := false
 var camera_test := false
+var stream_smoke := false
+var fly_test := false
 var camera_time := 0.0
 var manipulate_label: Label
 
@@ -68,10 +70,24 @@ func _ready() -> void:
 		_run_map_test()
 		return
 	if teleport_test:
+		terrain.stream_radius = 0
+		terrain.imagery_zoom = 6
 		_run_teleport_test()
 		return
 	if camera_test:
 		_run_camera_test()
+		return
+	if fly_test:
+		_run_fly_test()
+		return
+	if stream_smoke:
+		terrain.stream_radius = 0
+		terrain.imagery_zoom = 6
+		north_map.drop_latlon(78.2, 16.0)
+		_teleport_pin()
+		var sh := terrain.sample(0.0, 0.0)
+		print("stream ", terrain.spec.get("id"), " h ", sh, " flying ", vehicle.flying)
+		get_tree().quit(0 if str(terrain.spec.get("id")).begins_with("stream-") and not is_nan(sh) else 1)
 		return
 	if shot_dir != "":
 		_shots()
@@ -162,7 +178,7 @@ func _process(dt: float) -> void:
 		steer = sin(camera_time * 1.7)
 		if fmod(camera_time, 5.0) < 0.4:
 			steer = 1.0 if sin(camera_time * 0.7) > 0.0 else -1.0
-	if kind == "robot":
+	if kind != "human":
 		vehicle.throttle = clampf(throttle, -1.0, 1.0)
 		vehicle.steer = clampf(steer, -1.0, 1.0)
 		if not vehicle.manipulate:
@@ -189,8 +205,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F and (panel == null or not panel.visible):
-		vehicle.set_manipulate(not vehicle.manipulate)
-		_flash_manipulate()
+		if str(terrain.spec.get("id", "")) != "rene-levasseur":
+			_flash_notice("Dig not available here yet")
+		else:
+			vehicle.set_manipulate(not vehicle.manipulate)
+			_flash_manipulate()
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton and event.pressed and (panel == null or not panel.visible):
@@ -235,7 +254,7 @@ func _world() -> void:
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
 	env.fog_density = 0.00015
-	env.fog_aerial_perspective = 0.45
+	env.fog_aerial_perspective = 0.78
 	env.fog_light_color = Color(0.70, 0.76, 0.8)
 	env.fog_sun_scatter = 0.05
 	# Denser below the bench, so the reservoir carries the mist.
@@ -264,12 +283,12 @@ func _world() -> void:
 	add_child(fill)
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 140.0
-	sun.directional_shadow_split_1 = 0.08
-	sun.directional_shadow_split_2 = 0.22
-	sun.directional_shadow_split_3 = 0.5
-	sun.shadow_bias = 0.18
-	sun.shadow_normal_bias = 2.4
+	sun.directional_shadow_max_distance = 260.0
+	sun.directional_shadow_split_1 = 0.05
+	sun.directional_shadow_split_2 = 0.14
+	sun.directional_shadow_split_3 = 0.34
+	sun.shadow_bias = 0.1
+	sun.shadow_normal_bias = 1.6
 	sun.shadow_blur = 2.2
 	sun.light_angular_distance = 0.12
 	sun.directional_shadow_blend_splits = true
@@ -294,6 +313,10 @@ func _open_site(index: int, at: Vector2 = Vector2(-1.0e9, -1.0e9)) -> void:
 	if terrain and terrain.field != null:
 		terrain.save_edits()
 	site_index = index
+	vehicle.flying = false
+	vehicle.gravity_scale = 1.0
+	if kind == "drone":
+		_activate("robot")
 	var spec: Dictionary = sites[index]
 	var albedo: Texture2D = load("res://data/%s" % str(spec["color"]))
 	print("loading ", spec["name"])
@@ -370,15 +393,14 @@ func _place(body: Node3D, x: float, z: float, yaw_v: float) -> void:
 
 func _activate(next: String) -> void:
 	kind = next
-	vehicle.set_physics_process(next == "robot")
-	vehicle.visible = next == "robot"
+	var drone := next == "drone"
+	vehicle.flying = drone
+	vehicle.gravity_scale = 0.0 if drone else 1.0
+	vehicle.set_physics_process(next == "robot" or drone)
+	vehicle.visible = next != "human"
 	human.set_physics_process(next == "human")
 	human.visible = next == "human"
-	match next:
-		"robot":
-			active = vehicle
-		_:
-			active = human
+	active = human if next == "human" else vehicle
 	camera.target = active
 	camera.configure(next)
 	camera.yaw_offset = 0.0
@@ -443,12 +465,20 @@ func _ui() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(spacer)
-	for entry in [["Robot", "robot"], ["Human", "human"]]:
+	for entry in [["Robot", "robot"], ["Human", "human"], ["Drone", "drone"]]:
 		var b := _menu_button(entry[0])
 		b.custom_minimum_size = Vector2(72, 30)
 		b.size_flags_horizontal = Control.SIZE_SHRINK_END
 		b.pressed.connect(_activate.bind(entry[1]))
 		top.add_child(b)
+	var detail := _menu_button("Imagery 8")
+	detail.custom_minimum_size = Vector2(96, 30)
+	detail.size_flags_horizontal = Control.SIZE_SHRINK_END
+	detail.pressed.connect(func() -> void:
+		terrain.imagery_zoom = 6 if terrain.imagery_zoom >= 10 else terrain.imagery_zoom + 2
+		detail.text = "Imagery %d" % terrain.imagery_zoom
+	)
+	top.add_child(detail)
 	var map_host := Control.new()
 	map_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	map_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -650,8 +680,27 @@ func _teleport_pin() -> void:
 		camera.hold = false
 		_close_menu()
 		return
+	if lat < 45.0:
+		_flash_notice("Coming soon")
+		return
+	var streamed: Dictionary = terrain.open_stream(lat, lon, _grain())
+	if not streamed.is_empty():
+		foliage.rebuild(terrain, terrain.color_tex)
+		_place(vehicle, 0.0, 0.0, 0.0)
+		_place(human, 14.0, -10.0, 0.0)
+		vehicle.flying = true
+		vehicle.gravity_scale = 0.0
+		_activate("drone")
+		if camera.camera:
+			camera.camera.far = 80000.0
+		terrain.focus = active.global_position
+		_tune_site()
+		camera.snap()
+		camera.hold = false
+		_close_menu()
+		return
 	var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/north.json"))
-	if meta == null or lat < 45.0:
+	if meta == null:
 		_flash_notice("Coming soon")
 		return
 	var landed: Dictionary = terrain.open_north(meta, lat, lon, _grain())
@@ -749,6 +798,20 @@ func _mark_map() -> void:
 			poly.append(Vector2(lat, lon))
 		north_map.set_highlight(poly)
 	north_map.set_marks([])
+
+
+func _shot_altitude(lat: float, lon: float, near_name: String, far_name: String) -> void:
+	north_map.drop_latlon(lat, lon)
+	_teleport_pin()
+	camera.hold = true
+	vehicle.visible = false
+	var ground := terrain.sample(0.0, 0.0)
+	camera.camera.global_position = Vector3(-280.0, ground + 500.0, -280.0)
+	camera.camera.look_at(Vector3(220.0, ground, 220.0), Vector3.UP)
+	await _shot(near_name)
+	camera.camera.global_position = Vector3(-1400.0, ground + 3000.0, -1400.0)
+	camera.camera.look_at(Vector3(600.0, ground, 600.0), Vector3.UP)
+	await _shot(far_name)
 
 
 func _frame_spot(at: Vector3, look: Vector3, eye: float) -> void:
@@ -899,6 +962,10 @@ func _read_args() -> void:
 			teleport_test = true
 		if arg == "--camera-test":
 			camera_test = true
+		if arg == "--stream-smoke":
+			stream_smoke = true
+		if arg == "--fly-test":
+			fly_test = true
 	if OS.get_environment("ROLEPLAY_CAPTURE") == "1":
 		capture = true
 	if OS.has_feature("web"):
@@ -949,6 +1016,7 @@ func _shots() -> void:
 				await _shot("island-shore")
 			_open_menu()
 	if _take("cmp-shore") or _take("cmp-forest") or _take("cmp-rock"):
+		_close_menu()
 		if _take("cmp-shore"):
 			_frame_spot(Vector3(2240.0, 0.0, 3160.0), Vector3(2050.0, 0.0, 3000.0), 4.2)
 			await _shot("cmp-shore")
@@ -1005,6 +1073,15 @@ func _shots() -> void:
 		fwd = vehicle.forward()
 		await _frame_trench(fwd, 0.0)
 		await _shot("dig-after")
+	if _take("drone-svalbard-500") or _take("drone-yamal-500") or _take("drone-baffin-500"):
+		terrain.imagery_zoom = 10
+		terrain.stream_radius = 1
+		if _take("drone-svalbard-500"):
+			await _shot_altitude(78.2, 16.0, "drone-svalbard-500", "drone-svalbard-3km")
+		if _take("drone-yamal-500"):
+			await _shot_altitude(70.8, 68.5, "drone-yamal-500", "drone-yamal-3km")
+		if _take("drone-baffin-500"):
+			await _shot_altitude(70.0, -70.0, "drone-baffin-500", "drone-baffin-3km")
 	for i in range(1, sites.size()):
 		var key := "n%d" % (i + 1)
 		if not _take(key):
@@ -1068,6 +1145,44 @@ func _flash_notice(text: String) -> void:
 
 func _flash_manipulate() -> void:
 	_flash_notice("Blade down" if vehicle.manipulate else "Blade up")
+
+
+func _run_fly_test() -> void:
+	terrain.stream_radius = 0
+	terrain.imagery_zoom = 7
+	Engine.time_scale = 6.0
+	var points: Array[Vector2] = [
+		Vector2(78.2, 16.0),
+		Vector2(70.8, 68.5),
+		Vector2(70.0, -70.0),
+		Vector2(64.2, -153.0),
+		Vector2(60.0, -100.0),
+		Vector2(66.0, 30.0),
+		Vector2(55.0, 10.0),
+		Vector2(50.0, -80.0),
+		Vector2(72.0, 100.0),
+		Vector2(68.0, -140.0),
+	]
+	var failed := 0
+	for p in points:
+		north_map.drop_latlon(p.x, p.y)
+		_teleport_pin()
+		var elapsed := 0.0
+		while elapsed < 30.0:
+			await get_tree().physics_frame
+			elapsed += get_physics_process_delta_time()
+			vehicle.throttle = 0.65
+			vehicle.steer = sin(elapsed * 0.35)
+		var h := terrain.sample(vehicle.global_position.x, vehicle.global_position.z)
+		var id := str(terrain.spec.get("id"))
+		if is_nan(h) or is_inf(h) or not id.begins_with("stream-"):
+			failed += 1
+			print("fly FAIL ", p, " ", id, " h ", h)
+		else:
+			print("fly ok ", p, " ", id, " h ", snappedf(h, 0.1))
+	Engine.time_scale = 1.0
+	print("fly-test ", points.size(), " failed ", failed)
+	get_tree().quit(0 if failed == 0 else 1)
 
 
 func _run_camera_test() -> void:

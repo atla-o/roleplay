@@ -92,8 +92,21 @@ void fragment() {
 		color = mix(color, mirror, fres * 0.28);
 	}
 
-	float foam = (1.0 - smoothstep(0.0, 3.2, depth)) * (1.0 - smoothstep(0.05, 1.2, sheet));
-	float lip = smoothstep(0.0, 0.2, depth) * (1.0 - smoothstep(0.2, 1.3, depth));
+	// Distance to land, in the sense of FableFlight's shore field: how far the
+	// water is from a bed that breaks the surface. A few taps stand in for the
+	// jump flood on this single reservoir mesh.
+	float shore_m = 48.0;
+	vec2 texel = vec2(18.0 / tile_m.x, 18.0 / tile_m.y);
+	for (int i = 0; i < 8; i++) {
+		float ang = 0.785398 * float(i);
+		vec2 off = vec2(cos(ang), sin(ang)) * texel;
+		float bed_i = in_tile ? decode_h(uv + off) : water_y - 6.0;
+		if (bed_i > water_y - 0.15) {
+			shore_m = min(shore_m, 18.0);
+		}
+	}
+	float foam = (1.0 - smoothstep(0.0, 22.0, shore_m)) * (1.0 - smoothstep(0.05, 1.4, sheet));
+	float lip = smoothstep(0.0, 0.25, depth) * (1.0 - smoothstep(0.25, 1.6, depth));
 	float broken = step(0.42, hash21(floor(world_pos.xz * 0.35)));
 	color = mix(color, vec3(0.55, 0.62, 0.6), foam * 0.35 * broken);
 	color = mix(color, vec3(0.78, 0.82, 0.8), lip * 0.65);

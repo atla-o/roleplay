@@ -111,8 +111,9 @@ void fragment() {
 
 	vec3 detail = mix(gravel, rock, smoothstep(0.22, 0.55, slope) * detail_fade);
 	detail = mix(detail, detail * vec3(0.72, 0.78, 0.74), 0.35);
-	// The photograph is the surface. Detail textures only break it up.
-	vec3 alb = mix(detail, sat, 0.72);
+	// Away from the island's land-cover path, the draped photograph still leads.
+	float photo_far = mix(0.55, 0.94, smoothstep(20.0, 80.0, dist));
+	vec3 alb = mix(detail, sat, photo_far);
 	alb = alb / (1.0 + max(alb - vec3(0.7), vec3(0.0)) * 1.2);
 	vec4 cover = texture(cover_map, uv);
 	float cover_sum = cover.r + cover.g + cover.b + cover.a;
@@ -145,8 +146,11 @@ void fragment() {
 		float burn_w = smoothstep(0.18, 0.05, sat_l) * (1.0 - shore_h) * (1.0 - bog) * step(0.2, cover.r);
 		detail = mix(detail, burn, burn_w * 0.85);
 		detail *= 0.62 + patch_m * 0.28 + patch_l * 0.28;
-		float open = max(rock_w, max(shore_h, bog));
-		alb = mix(detail, sat, mix(0.05, 0.22, open));
+		// The orthophoto is the colour. Detail only roughens it up close.
+		float close = 1.0 - smoothstep(16.0, 70.0, dist);
+		float luma = max(dot(detail, vec3(0.25, 0.5, 0.25)), 0.04);
+		float grain = mix(1.0, 0.92 + luma * 0.16, close);
+		alb = sat * grain;
 		if (detail_fade > 0.15) {
 			vec3 ntex = once(forest_nrm, world_pos.xz * 0.24) * 2.0 - 1.0;
 			vec3 rtex = once(rock_nrm, world_pos.xz * 0.11) * 2.0 - 1.0;

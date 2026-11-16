@@ -145,6 +145,14 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 	_collide(rocks, 0.55, 1.1)
 
 
+func _raster_at(img: Image, east: float, north: float, span: float) -> Color:
+	if img == null:
+		return Color(0.2, 0.32, 0.14)
+	var x := clampi(int(east / span * float(img.get_width() - 1)), 0, img.get_width() - 1)
+	var y := clampi(int((1.0 - north / span) * float(img.get_height() - 1)), 0, img.get_height() - 1)
+	return img.get_pixel(x, y)
+
+
 func _card(tex: Texture2D, shader: Shader, crosses: int, half_w: float, height: float, sway: float) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -159,6 +167,7 @@ func _card(tex: Texture2D, shader: Shader, crosses: int, half_w: float, height: 
 		# Godot's texture V is down the image, and the cards are painted tip-up.
 		var uvs: Array[Vector2] = [Vector2(0, 1), Vector2(0, 0), Vector2(1, 1), Vector2(1, 1), Vector2(0, 0), Vector2(1, 0)]
 		for i in verts.size():
+			st.set_color(Color(1, 1, 1))
 			st.set_uv(uvs[i])
 			st.add_vertex(verts[i])
 	st.generate_normals()
@@ -181,6 +190,15 @@ func _place_boreal(terrain: TerrainWorld, cover: Image) -> void:
 	var mid_f: Array[Transform3D] = []
 	var far_s: Array[Transform3D] = []
 	var far_f: Array[Transform3D] = []
+	var near_s_c: Array[Color] = []
+	var near_f_c: Array[Color] = []
+	var mid_s_c: Array[Color] = []
+	var mid_f_c: Array[Color] = []
+	var far_s_c: Array[Color] = []
+	var far_f_c: Array[Color] = []
+	var photo: Image = terrain.color_tex.get_image() if terrain.color_tex != null else null
+	var ndvi_tex := load("res://data/ile_ndvi.png") as Texture2D
+	var ndvi: Image = ndvi_tex.get_image() if ndvi_tex != null else null
 	var birch_near: Array[Transform3D] = []
 	var shrubs: Array[Transform3D] = []
 	var rocks: Array[Transform3D] = []
@@ -203,7 +221,7 @@ func _place_boreal(terrain: TerrainWorld, cover: Image) -> void:
 				var rh := terrain.sample(east, north)
 				if rh > water + 0.4:
 					rocks.append(_xf(east, rh - 0.15, north, _hash(x, y + 4) * TAU, 0.45 + _hash(x + 6, y) * 1.1))
-			if dist < 200.0 and shrubs.size() < 700 and shore < 0.85 and (tree > 0.08 or px.g > 0.18 or px.b > 0.22) and _hash(x, y + 9) > 0.4:
+			if dist < 160.0 and shrubs.size() < 140 and shore < 0.28 and px.b > 0.15 and _hash(x, y + 9) > 0.55:
 				var sh := terrain.sample(east, north)
 				if sh > water + 1.2:
 					shrubs.append(_xf(east, sh, north, _hash(x + 1, y) * TAU, 0.7 + _hash(x, y + 5) * 0.8))
@@ -218,35 +236,49 @@ func _place_boreal(terrain: TerrainWorld, cover: Image) -> void:
 			var hh := terrain.sample(east, north)
 			if hh < water + 1.5:
 				continue
-			# Cards are modelled at 16 m. Black spruce and balsam fir here run 10–20 m.
+			var pix := _raster_at(photo, east, north, span)
+			var veg := _raster_at(ndvi, east, north, span).r if ndvi != null else 1.0
+			var green := pix.g - maxf(pix.r, pix.b)
+			# Imagery tree mask plus the land-cover weight. Bare shore and rock stay open.
+			if (photo != null and green < 0.01 and veg < 0.62) or shore > 0.62:
+				continue
 			var tall := 0.62 + _hash(x + 5, y + 2) * 0.63
-			if px.g > 0.4:
+			if px.g > 0.4 or veg < 0.7:
 				tall *= 0.78
 			var yaw := _hash(x + 8, y) * TAU
 			var xf := _xf(east, hh - 0.25, north, yaw, tall)
+			var lum := (pix.r + pix.g + pix.b) / 3.0
+			var gain := clampf(0.62 / maxf(lum, 0.05), 0.5, 1.8)
+			var tint := Color(clampf(pix.r * gain, 0.0, 1.0), clampf(pix.g * gain, 0.0, 1.0), clampf(pix.b * gain, 0.0, 1.0))
 			var fir := _hash(x + 1, y + 4) > 0.8
 			if dist < 85.0:
 				if fir:
 					near_f.append(xf)
+					near_f_c.append(tint)
 				else:
 					near_s.append(xf)
+					near_s_c.append(tint)
 			elif dist < 260.0:
 				if fir:
 					mid_f.append(xf)
+					mid_f_c.append(tint)
 				else:
 					mid_s.append(xf)
+					mid_s_c.append(tint)
 			else:
 				if fir:
 					far_f.append(xf)
+					far_f_c.append(tint)
 				else:
 					far_s.append(xf)
-	_spawn(spruce_near, near_s, true, 0.0, 110.0)
-	_spawn(fir_near, near_f, true, 0.0, 110.0)
+					far_s_c.append(tint)
+	_spawn(spruce_near, near_s, true, 0.0, 110.0, near_s_c)
+	_spawn(fir_near, near_f, true, 0.0, 110.0, near_f_c)
 	_spawn(birch_card, birch_near, true, 0.0, 140.0)
-	_spawn(spruce_far, mid_s, false, 70.0, 320.0)
-	_spawn(fir_far, mid_f, false, 70.0, 320.0)
-	_spawn(spruce_far, far_s, false, 240.0, 1500.0)
-	_spawn(fir_far, far_f, false, 240.0, 1500.0)
+	_spawn(spruce_far, mid_s, false, 70.0, 320.0, mid_s_c)
+	_spawn(fir_far, mid_f, false, 70.0, 320.0, mid_f_c)
+	_spawn(spruce_far, far_s, false, 240.0, 1500.0, far_s_c)
+	_spawn(fir_far, far_f, false, 240.0, 1500.0, far_f_c)
 	_spawn(shrub_card, shrubs, false, 0.0, 95.0)
 	for mesh in boulders:
 		_spawn(mesh, rocks, true, 0.0, 180.0)
@@ -412,15 +444,18 @@ func _collect(node: Node, found: Array) -> void:
 		_collect(child, found)
 
 
-func _spawn(mesh: Mesh, items: Array[Transform3D], shadows: bool, begin: float, end: float) -> void:
+func _spawn(mesh: Mesh, items: Array[Transform3D], shadows: bool, begin: float, end: float, tints: Array[Color] = []) -> void:
 	if mesh == null or items.is_empty():
 		return
 	var multi := MultiMesh.new()
 	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.use_colors = tints.size() == items.size()
 	multi.mesh = mesh
 	multi.instance_count = items.size()
 	for i in items.size():
 		multi.set_instance_transform(i, items[i])
+		if multi.use_colors:
+			multi.set_instance_color(i, tints[i])
 	var node := MultiMeshInstance3D.new()
 	node.multimesh = multi
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadows else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

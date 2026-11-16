@@ -1,6 +1,8 @@
 class_name TerrainWorld
 extends Node3D
 
+const _Tiles = preload("res://scripts/tile_stream.gd")
+
 const CHUNK := 32
 
 var field: Soil.Field
@@ -39,6 +41,8 @@ var persist := true
 var site_id := ""
 # World metres = field metres - view_origin, so a far coarse window stays near the camera.
 var view_origin := Vector2.ZERO
+var imagery_zoom := 8
+var stream_radius := 1
 const WINDOW := 97
 const COL_SPACING := 0.5
 
@@ -161,6 +165,40 @@ func open_north(meta: Dictionary, lat: float, lon: float, grain: Texture2D) -> D
 	var back_y := -half_m + float(row) * step
 	var ll := Geo.polar_inverse(Vector2(back_x, back_y))
 	return {"x": 0.0, "z": 0.0, "lat": ll.x, "lon": ll.y}
+
+
+## Streamed web-mercator ground. Returns empty if a tile cannot be fetched,
+## so the caller can fall back without crashing.
+func open_stream(lat: float, lon: float, grain: Texture2D) -> Dictionary:
+	var zoom := clampi(imagery_zoom, 5, 11)
+	var patch: Dictionary = _Tiles.fetch_patch(lat, lon, zoom, stream_radius)
+	if patch.is_empty():
+		return {}
+	var posts := int(patch["posts"])
+	var tile_m := float(patch["tile_m"])
+	var step := tile_m / 128.0
+	var frac: Vector2 = _Tiles.fraction(lat, lon, zoom)
+	var field_x := tile_m * (float(stream_radius) + frac.x)
+	var field_z := tile_m * (float(stream_radius) + 1.0 - frac.y)
+	var spec_n := {
+		"id": "stream-%d-%d-%d" % [zoom, int(patch["center"].x), int(patch["center"].y)],
+		"name": "North",
+		"cols": posts,
+		"rows": posts,
+		"spacing": step,
+		"hmin": float(patch["hmin"]),
+		"hmax": maxf(float(patch["hmax"]), float(patch["hmin"]) + 1.0),
+		"repose": 34.0,
+		"water": 0.0,
+		"forest": false,
+		"lat": lat,
+		"spawn": [0.0, 0.0],
+		"view_origin": [field_x, field_z],
+		"diggable": false,
+	}
+	var albedo := ImageTexture.create_from_image(patch["image"])
+	setup_heights(spec_n, patch["heights"], albedo, grain)
+	return {"x": 0.0, "z": 0.0, "lat": lat, "lon": lon}
 
 
 func _nearest_land(full: PackedFloat32Array, posts: int, col: int, row: int) -> Vector2i:

@@ -207,7 +207,10 @@ jobs:
         run: timeout 240 /opt/godot/godot --headless --path godot -- --camera-test
 
       - name: Teleport test
-        run: timeout 480 /opt/godot/godot --headless --path godot -- --teleport-test
+        run: timeout 700 /opt/godot/godot --headless --path godot -- --teleport-test
+
+      - name: Fly test
+        run: timeout 700 /opt/godot/godot --headless --path godot -- --fly-test
 
       - name: Export web preview
         run: |

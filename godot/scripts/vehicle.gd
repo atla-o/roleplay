@@ -6,6 +6,7 @@ var throttle := 0.0
 var steer := 0.0
 var blade_angle := 0.4
 var manipulate := false
+var flying := false
 var blade_tilt := 0.0
 var tilt_node: Node3D
 var blade_node: Node3D
@@ -55,6 +56,9 @@ func _physics_process(dt: float) -> void:
 		_pose_blade()
 		return
 	dt = minf(dt, 0.05)
+	if flying:
+		_fly(dt)
+		return
 	var space := get_world_3d().direct_space_state
 	var xf := global_transform
 	var hits := 0
@@ -128,6 +132,24 @@ func _physics_process(dt: float) -> void:
 	elif dust:
 		dust.emitting = false
 	_hold_shore()
+
+
+func _fly(dt: float) -> void:
+	var wish := global_transform.basis * Vector3(steer, 0.0, throttle)
+	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_E):
+		wish.y += 1.0
+	if Input.is_key_pressed(KEY_Q) or Input.is_key_pressed(KEY_CTRL):
+		wish.y -= 1.0
+	var speed := 55.0
+	linear_velocity = linear_velocity.lerp(wish.normalized() * speed * maxf(wish.length(), 0.0), 1.0 - exp(-dt * 2.2))
+	if wish.length() < 0.05:
+		linear_velocity = linear_velocity.lerp(Vector3.ZERO, 1.0 - exp(-dt * 1.4))
+	var ground := terrain.sample(global_position.x, global_position.z)
+	if global_position.y < ground + 2.0:
+		var t := global_transform
+		t.origin.y = ground + 2.0
+		global_transform = t
+		linear_velocity.y = maxf(linear_velocity.y, 0.0)
 
 
 func set_manipulate(on: bool) -> void:

@@ -1,0 +1,43 @@
+{
+  "tile": "rene-levasseur",
+  "baked_at": "2026-11-10T01:52:38.058158+00:00",
+  "statement": "Measured research terrain. The ring is an emblem of the O. This tile is not land to reshape.",
+  "elevation": {
+    "product": "NRCan HRDEM Mosaic 1 m DTM",
+    "href": "https://canelevation-dem.s3.ca-central-1.amazonaws.com/hrdem-mosaic-1m/9_4-mosaic-1m-dtm.tif",
+    "licence": "Open Government Licence \u2013 Canada",
+    "resampling": "bilinear to 638\u00d7697 posts at 120 m",
+    "nodata_posts_filled": 6194,
+    "min_m": 347.33,
+    "max_m": 1009.16
+  },
+  "mrdem_30": {
+    "product": "NRCan MRDEM-30 DTM",
+    "href": "https://canelevation-dem.s3.ca-central-1.amazonaws.com/mrdem-30/mrdem-30-dtm.tif",
+    "licence": "Open Government Licence \u2013 Canada",
+    "note": "Sampled on the same grid for globe-scale comparison. Copernicus GLO-30 is an input to MRDEM.",
+    "finite_posts": 444686,
+    "min_m": 347.0,
+    "max_m": 1009.08
+  },
+  "land_cover": {
+    "product": "NRCan 2020 Land Cover of Canada",
+    "href": "https://datacube-prod-data-public.s3.ca-central-1.amazonaws.com/store/land/landcover/landcover-2020-classification.tif",
+    "licence": "Open Government Licence \u2013 Canada",
+    "resampling": "nearest",
+    "class_counts": {
+      "1": 285335,
+      "2": 801,
+      "5": 6,
+      "6": 286,
+      "8": 24916,
+      "10": 3563,
+      "14": 446,
+      "17": 118,
+      "18": 129215
+    }
+  },
+  "water": "NRCan 2020 land-cover class 18 (water). GRHQ and NHN vectors were not clipped into this repo; the reservoir ring is the water class.",
+  "quebec_lidar": "Individual Quebec 1 m MNT sheets were not downloaded. The HRDEM 1 m mosaic is the national lidar-derived surface that covers this island.",
+  "not_used": "ArcticDEM does not cover 51\u00b0N."
+}

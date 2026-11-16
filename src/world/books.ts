@@ -1,6 +1,6 @@
 /** Giant-scale books. Volumes are sim parameters. The measured basin is not edited from here. */
 
-export type SwarmKind = 'mass' | 'bio' | 'structure';
+export type SwarmKind = 'mass' | 'bio' | 'structure' | 'survey';
 
 export interface SwarmBook {
   cut_m3: number;
@@ -22,6 +22,7 @@ export function emptyBook(): SwarmBook {
 }
 
 export function commandSwarm(book: SwarmBook, kind: SwarmKind): { ok: boolean; reason?: string } {
+  if (kind === 'survey') return { ok: true };
   if (kind === 'mass') {
     book.cut_m3 += SWARM_CUT_M3;
     book.fill_m3 += SWARM_CUT_M3;

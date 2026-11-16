@@ -19,6 +19,7 @@ export class WorldPanel {
     root.querySelector('#swarm-mass')!.addEventListener('click', () => this.onCommand('mass'));
     root.querySelector('#swarm-bio')!.addEventListener('click', () => this.onCommand('bio'));
     root.querySelector('#swarm-structure')!.addEventListener('click', () => this.onCommand('structure'));
+    root.querySelector('#swarm-survey')!.addEventListener('click', () => this.onCommand('survey'));
     root.querySelector('#enter-basin')!.addEventListener('click', () => this.onEnter());
   }
 
@@ -27,7 +28,7 @@ export class WorldPanel {
     list.innerHTML = regionTiles(regionId)
       .map(
         (tile) =>
-          `<button type="button" class="tool${tile.id === selectedId ? ' active' : ''}" data-tile="${tile.id}">${tile.playable ? 'Polar Desert Basin' : tile.name}${tile.playable ? ' · measured' : ''}</button>`,
+          `<button type="button" class="tool${tile.id === selectedId ? ' active' : ''}" data-tile="${tile.id}">${tile.name}${tile.playable ? ' · measured' : ''}</button>`,
       )
       .join('');
     list.querySelectorAll<HTMLButtonElement>('[data-tile]').forEach((button) => {
@@ -38,22 +39,47 @@ export class WorldPanel {
     });
   }
 
-  showTile(tile: WorldTile, book: SwarmBook, records: Occurrence[], status: string): void {
+  showTile(tile: WorldTile, book: SwarmBook, records: Occurrence[], status: string, intent: SwarmKind | null = null): void {
     const box = document.querySelector('#tile-detail')!;
     const pond = Math.round(book.ponded * 100);
-    box.innerHTML = `
-      <div class="kicker">${tile.region}</div>
-      <h2>${tile.name}</h2>
-      <p class="status">${tile.playable ? 'This square holds the measured 4 × 4 km basin. Swarm orders are the giant view and do not rewrite that surface.' : 'Swarm orders on this square are a giant view. Cut and fill stay in the square. There is no measured basin here yet.'}</p>
+    const lead =
+      tile.mode === 'observe'
+        ? 'Measured research terrain. The reservoir ring is an emblem of the O, not land to reshape. Robot activity here is a monitoring crew.'
+        : tile.playable
+          ? 'Open this square to drain, cut, and grade. This tally does not rewrite the surface.'
+          : 'This square has no measured surface yet. A crew here only updates the giant tally.';
+    const body =
+      tile.mode === 'observe'
+        ? `<p class="status">${lead}</p>
+      <div class="row"><span>Island centre</span><span>51.44°N, 68.74°W</span></div>
+      <div class="row"><span>Mont de Babel</span><span>about 952 m</span></div>
+      <div class="row"><span>Monitoring</span><span>non-destructive <i class="tag">SIM</i></span></div>
+      <p class="status">${status}</p>`
+        : `<p class="status">${lead}</p>
       <div class="row"><span>Standing melt</span><span>${pond}% <i class="tag">SIM</i></span></div>
       <div class="row"><span>Cut and fill</span><span>${fmt(book.cut_m3)} m³ <i class="tag">SIM</i></span></div>
       <div class="row"><span>Stone bank</span><span>${fmt(book.stone_m3)} m³ <i class="tag">SIM</i></span></div>
       <div class="row"><span>Living surface</span><span>${book.bio ? 'opened' : 'waiting'}</span></div>
       <div class="row"><span>Civic ground</span><span>${book.built ? 'started' : 'waiting'}</span></div>
-      <p class="status">${status}</p>
-    `;
+      <p class="status">${status}</p>`;
+    box.innerHTML = `<div class="kicker">${tile.region}</div><h2>${tile.name}</h2>${body}`;
     const enter = document.querySelector<HTMLButtonElement>('#enter-basin')!;
     enter.hidden = !tile.playable;
+    enter.textContent =
+      tile.mode === 'observe'
+        ? 'Open the ring'
+        : intent === 'mass'
+          ? 'Work the ground'
+          : intent === 'bio'
+            ? 'Open for the bio crew'
+            : intent === 'structure'
+              ? 'Open for the builders'
+              : 'Enter the measured basin';
+    for (const id of ['swarm-mass', 'swarm-bio', 'swarm-structure']) {
+      const button = document.querySelector<HTMLButtonElement>(`#${id}`)!;
+      button.hidden = tile.mode === 'observe';
+    }
+    document.querySelector<HTMLButtonElement>('#swarm-survey')!.hidden = tile.mode !== 'observe';
     const observed = document.querySelector('#world-occurrences')!;
     observed.innerHTML = records.length
       ? records
@@ -77,7 +103,7 @@ function markup(): string {
         <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="10.5" fill="none" stroke="#d7dbe0" stroke-width="1.25"/></svg>
         <div><div class="word">ROLEPLAY</div><div class="sub">Creation division</div></div>
       </div>
-      <div class="place"><strong>World map</strong><div class="muted">Tier 1 cold squares · north first</div></div>
+      <div class="place"><strong>World map</strong><div class="muted">Pick a square. Open a measured one to move the ground.</div></div>
       <button id="world-home" class="text-btn" type="button" style="width:auto">North</button>
     </header>
     <aside class="rail">
@@ -87,12 +113,13 @@ function markup(): string {
       <div id="tile-list"></div>
     </aside>
     <aside class="inspector">
+      <button id="enter-basin" class="tool active" type="button">Enter the measured basin</button>
       <div id="tile-detail"></div>
       <div class="kicker">Swarm</div>
       <button id="swarm-mass" class="tool" type="button">Mass ton movers</button>
       <button id="swarm-bio" class="tool" type="button">Bio builder and weather</button>
       <button id="swarm-structure" class="tool" type="button">Structure builders</button>
-      <button id="enter-basin" class="tool active" type="button">Enter the measured basin</button>
+      <button id="swarm-survey" class="tool" type="button" hidden>Monitoring crew</button>
       <div class="kicker">Species layer</div>
       <div id="world-occurrences"></div>
       <p class="peers"><a href="${support.url}" target="_blank" rel="noreferrer">${support.label}</a> · ${support.note}</p>

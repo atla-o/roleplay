@@ -13,13 +13,14 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #app, #world, #tile, #cesium { height: 100%; margin: 0; }
+html, body, #app, #world, #tile, #cesium, .ring-view { height: 100%; margin: 0; }
+.ring-view { position: absolute; inset: 0; }
 #world, #tile { position: absolute; inset: 0; }
 #cesium { position: absolute; inset: 0; }
 #cesium .cesium-viewer, #cesium .cesium-viewer-cesiumWidget, #cesium canvas { width: 100%; height: 100%; }
 #cesium-credit { position: absolute; left: 196px; bottom: 14px; z-index: 3; max-width: 42%; font-size: 10px; color: #e7e8ea; }
 .cesium-credit-logoContainer, .cesium-credit-logo { display: none !important; }
-#world .rail { width: 228px; }
+#world .rail { width: 268px; }
 #world .inspector { width: 320px; }
 #tile-list .tool { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #cesium-credit .cesium-credit-lightbox-overlay, #cesium-credit .cesium-credit-expand-link { color: inherit; }
@@ -66,6 +67,7 @@ canvas { display: block; }
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
+.tool[hidden], .text-btn[hidden], [hidden] { display: none !important; }
 .tool, .text-btn {
   display: block; width: 100%;
   padding: 7px 12px;
@@ -126,6 +128,44 @@ canvas { display: block; }
 .links a { color: var(--silver); text-decoration: none; }
 .links a:hover { text-decoration: underline; }
 
+.coach {
+  position: absolute;
+  z-index: 2;
+  top: 76px;
+  left: 196px;
+  right: 320px;
+  background: var(--panel);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  padding: 8px 12px 10px;
+}
+.coach p { margin: 0; font-size: 13px; line-height: 1.35; }
+#coach-how { color: var(--muted); margin-top: 2px; }
+.coach .tool { width: auto; display: inline-block; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--line); }
+button:disabled { opacity: 0.45; cursor: default; }
+.walk-pad {
+  position: absolute;
+  z-index: 3;
+  left: 196px;
+  bottom: 100px;
+  display: grid;
+  grid-template-columns: 44px 44px 44px;
+  grid-template-areas: ". up ." "left down right";
+  gap: 4px;
+}
+.walk-pad button {
+  width: 44px; height: 44px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  text-align: center;
+  touch-action: none;
+}
+.walk-pad button:nth-child(1) { grid-area: up; }
+.walk-pad button:nth-child(2) { grid-area: left; }
+.walk-pad button:nth-child(3) { grid-area: down; }
+.walk-pad button:nth-child(4) { grid-area: right; }
+canvas, #cesium canvas { touch-action: none; }
+
 .nav { left: 198px; bottom: 96px; display: flex; align-items: center; gap: 12px; color: #1c2124; }
 .compass {
   width: 28px; height: 28px; border: 1px solid rgba(28, 33, 36, 0.45); border-radius: 50%;
@@ -167,7 +207,37 @@ dialog a { color: var(--ice); }
 .close { float: right; color: var(--muted); }
 
 @media (max-width: 980px) {
-  .inspector { display: none; }
-  .rail { width: 132px; }
-  .nav { left: 152px; }
+  .top { height: auto; min-height: 52px; flex-wrap: wrap; gap: 8px; padding: 8px 10px; }
+  .brand { min-width: 0; }
+  .place { flex: 1 1 160px; }
+  #world .inspector, .inspector {
+    display: block;
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 84px;
+    width: auto;
+    height: 168px;
+  }
+  .rail, #world .rail {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 260px;
+    width: auto;
+    height: 48px;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0;
+  }
+  .rail .group { display: none; }
+  .rail .tool, .rail .text-btn { width: auto; flex: 0 0 auto; white-space: nowrap; }
+  .coach { left: 8px; right: 8px; top: 108px; }
+  .walk-pad { left: 8px; bottom: 320px; }
+  .nav { display: none; }
+  .dock { height: 72px; overflow: hidden; grid-template-columns: 1fr auto; }
+  .season-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bank { display: none; }
+  #cesium-credit { left: 8px; max-width: 80%; }
 }

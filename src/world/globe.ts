@@ -5,7 +5,7 @@ import {
   type SwarmBook,
   type SwarmKind,
 } from './books';
-import { PLAYABLE, TILES, type WorldTile } from './tiles';
+import { PLAYABLE, RING_MARK, RING_TILE, TILES, type WorldTile } from './tiles';
 
 const EOX =
   'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/g/{z}/{y}/{x}.jpg';
@@ -52,11 +52,14 @@ export class WorldGlobe {
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
       creditContainer: credit,
     });
+    this.viewer.clock.currentTime = Cesium.JulianDate.fromIso8601('2026-06-21T16:30:00Z');
+    this.viewer.clock.shouldAnimate = false;
     this.viewer.scene.globe.enableLighting = true;
     this.viewer.scene.globe.showGroundAtmosphere = true;
     if (this.viewer.scene.skyAtmosphere) this.viewer.scene.skyAtmosphere.show = true;
     this.viewer.cesiumWidget.screenSpaceEventHandler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
     this.addSatelliteLayer();
+    this.addRingWash();
     this.drawTiles();
     this.bindPick();
     this.viewer.clock.onTick.addEventListener(() => this.tick());
@@ -81,6 +84,17 @@ export class WorldGlobe {
     this.viewer.imageryLayers.addImageryProvider(satellite);
   }
 
+  private addRingWash(): void {
+    const base = import.meta.env.BASE_URL || './';
+    const url = new URL('data/ile/ring.png', new URL(base, window.location.href)).href;
+    void Cesium.SingleTileImageryProvider.fromUrl(url, {
+      rectangle: Cesium.Rectangle.fromDegrees(RING_TILE.west, RING_TILE.south, RING_TILE.east, RING_TILE.north),
+    }).then((provider) => {
+      const layer = this.viewer.imageryLayers.addImageryProvider(provider);
+      layer.alpha = 0.95;
+    });
+  }
+
   private drawTiles(): void {
     for (const tile of TILES) {
       const color = tile.playable ? Cesium.Color.fromCssColorString('#c5dde4') : Cesium.Color.fromCssColorString('#f4f7f8');
@@ -94,9 +108,30 @@ export class WorldGlobe {
         },
       });
     }
-    const site = Cesium.Cartesian3.fromDegrees(PLAYABLE.west + (PLAYABLE.east - PLAYABLE.west) / 2, BASIN_LAT, 4000);
     this.viewer.entities.add({
-      position: site,
+      id: 'reservoir-ring',
+      polyline: {
+        positions: reservoirRing(RING_MARK.lat, RING_MARK.lon, RING_MARK.radiusM),
+        width: 2.6,
+        material: Cesium.Color.fromCssColorString('#f7f4ea').withAlpha(0.92),
+        arcType: Cesium.ArcType.NONE,
+      },
+    });
+    this.viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(RING_MARK.lon, RING_MARK.lat, 5000),
+      label: {
+        text: 'Île René-Levasseur',
+        font: '600 13px Instrument Sans, sans-serif',
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.fromCssColorString('#121416'),
+        outlineWidth: 3,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        pixelOffset: new Cesium.Cartesian2(0, -18),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    });
+    this.viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees((PLAYABLE.west + PLAYABLE.east) / 2, BASIN_LAT, 4000),
       point: {
         pixelSize: 8,
         color: Cesium.Color.fromCssColorString('#e8f4f7'),
@@ -182,6 +217,11 @@ export class WorldGlobe {
   }
 
   command(kind: SwarmKind): { ok: boolean; reason?: string } {
+    if (this.tile().mode === 'observe' && kind !== 'survey') {
+      const reason = 'This square is measured research terrain. The ring is an emblem of the O, not land to reshape. A monitoring crew can cross it.';
+      this.onChange();
+      return { ok: false, reason };
+    }
     const result = commandSwarm(this.book(), kind);
     if (!result.ok) {
       this.onChange();
@@ -242,8 +282,17 @@ export class WorldGlobe {
   private restSwarm(): void {
     this.swarmKind = null;
     this.swarmT = 1;
+    if (this.tile().mode === 'observe') {
+      this.clearSwarm();
+      return;
+    }
     this.ensureSwarm();
     this.placeSwarm(0.08);
+  }
+
+  private clearSwarm(): void {
+    for (const entity of this.swarm) this.viewer.entities.remove(entity);
+    this.swarm = [];
   }
 
   private ensureSwarm(): void {
@@ -301,5 +350,18 @@ function ring(tile: WorldTile, height: number): Cesium.Cartesian3[] {
 function swarmColor(kind: SwarmKind): Cesium.Color {
   if (kind === 'bio') return Cesium.Color.fromCssColorString('#d5efe4');
   if (kind === 'structure') return Cesium.Color.fromCssColorString('#e7d3a8');
+  if (kind === 'survey') return Cesium.Color.fromCssColorString('#d7e6ee');
   return Cesium.Color.fromCssColorString('#f2f4f6');
+}
+
+function reservoirRing(lat: number, lon: number, radiusM: number): Cesium.Cartesian3[] {
+  const coords: number[] = [];
+  const steps = 96;
+  for (let i = 0; i <= steps; i++) {
+    const angle = (i / steps) * Math.PI * 2;
+    const dLat = (radiusM * Math.cos(angle)) / 111_320;
+    const dLon = (radiusM * Math.sin(angle)) / (111_320 * Math.cos((lat * Math.PI) / 180));
+    coords.push(lon + dLon, lat + dLat, 1200);
+  }
+  return Cesium.Cartesian3.fromDegreesArrayHeights(coords);
 }

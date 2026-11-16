@@ -92,12 +92,14 @@ The installed launcher uses the same Vulkan-then-OpenGL fallback.
 Logs go to roleplay.log next to the game.
 
 Controls
-  You start in the dozer on Northern 1 — Canada. W drives, and the blade
-  is already down, so the ground moves.
+  You start in the dozer on Île René-Levasseur. W drives, and the blade
+  is already down, so the ground moves. The reservoir is the shoreline.
   S reverse, A and D steer. Q raises the blade, E lowers it.
   The screen stays clear. Esc opens Settings and Esc closes it.
-  Settings switches Robot and Human, teleports to Northern 1 — Canada,
-  Northern 2 — Europe, or Northern 3 — Russia, and has Resume and Quit.
+  Settings switches Robot and Human, and has Resume and Quit.
+  The Map tab is the north from 45 degrees up. Drag to pan, the wheel
+  zooms, a click drops a pin, and Teleport or Enter goes there.
+  Home: island returns to Île René-Levasseur. Digs stay in a private local file.
 
 Benchmark
   ./run.sh --bench

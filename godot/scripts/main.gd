@@ -25,20 +25,38 @@ var world: Environment
 var bench := false
 var bench_elapsed := 0.0
 var bench_times := PackedFloat32Array()
+var edit_timer := 0.0
+var north_map: NorthMap
+var pin_label: Label
+var search_box: LineEdit
+var home_button: Button
+var places: Array = []
+var recent_box: VBoxContainer
+var recent: Array = []
+var map_test := false
+var teleport_test := false
+var camera_test := false
+var stream_smoke := false
+var fly_test := false
+var camera_time := 0.0
+var manipulate_label: Label
 
 func _ready() -> void:
 	DisplayServer.window_set_title("Roleplay")
 	_read_args()
 	_world()
 	terrain = TerrainWorld.new()
+	terrain.persist = not dig_test and not map_test and not teleport_test and not camera_test and shot_dir == "" and not bench
 	add_child(terrain)
 	foliage = Foliage.new()
 	add_child(foliage)
 	vehicle = TrackedVehicle.new()
 	vehicle.terrain = terrain
+	vehicle.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	add_child(vehicle)
 	human = Walker.new()
 	human.terrain = terrain
+	human.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	add_child(human)
 	camera = ChaseCamera.new()
 	camera.terrain = terrain
@@ -46,8 +64,31 @@ func _ready() -> void:
 	_load_sites()
 	_ui()
 	_activate("robot")
-	vehicle.blade_angle = -0.5
+	vehicle.set_manipulate(false)
 	DisplayServer.window_set_title("Roleplay")
+	if map_test:
+		_run_map_test()
+		return
+	if teleport_test:
+		terrain.stream_radius = 0
+		terrain.imagery_zoom = 6
+		_run_teleport_test()
+		return
+	if camera_test:
+		_run_camera_test()
+		return
+	if fly_test:
+		_run_fly_test()
+		return
+	if stream_smoke:
+		terrain.stream_radius = 0
+		terrain.imagery_zoom = 6
+		north_map.drop_latlon(78.2, 16.0)
+		_teleport_pin()
+		var sh := terrain.sample(0.0, 0.0)
+		print("stream ", terrain.spec.get("id"), " h ", sh, " flying ", vehicle.flying)
+		get_tree().quit(0 if str(terrain.spec.get("id")).begins_with("stream-") and not is_nan(sh) else 1)
+		return
 	if shot_dir != "":
 		_shots()
 	elif dig_test:
@@ -66,8 +107,18 @@ func _process(dt: float) -> void:
 	if fps_time > 2.0:
 		fps_time = 0.0
 		print("fps ", Engine.get_frames_per_second())
+	_layout_map_chrome()
+	if manipulate_label and manipulate_label.visible:
+		manipulate_label.modulate.a = move_toward(manipulate_label.modulate.a, 0.0, dt * 0.45)
+		if manipulate_label.modulate.a <= 0.02:
+			manipulate_label.visible = false
 	if active:
 		terrain.focus = active.global_position
+	if terrain and terrain.persist:
+		edit_timer += dt
+		if edit_timer > 8.0:
+			edit_timer = 0.0
+			terrain.save_edits()
 	if panel and panel.visible:
 		vehicle.throttle = 0.0
 		vehicle.steer = 0.0
@@ -121,13 +172,21 @@ func _process(dt: float) -> void:
 		throttle = 1.0
 		steer = 0.0
 		lower = true
-	if kind == "robot":
+	if camera_test:
+		camera_time += dt
+		throttle = 0.9
+		steer = sin(camera_time * 1.7)
+		if fmod(camera_time, 5.0) < 0.4:
+			steer = 1.0 if sin(camera_time * 0.7) > 0.0 else -1.0
+	if kind != "human":
 		vehicle.throttle = clampf(throttle, -1.0, 1.0)
 		vehicle.steer = clampf(steer, -1.0, 1.0)
+		if not vehicle.manipulate:
+			vehicle.blade_angle = 0.4
 		var rate := 0.8 * dt
-		if raise:
+		if vehicle.manipulate and raise:
 			vehicle.blade_angle = minf(0.45, vehicle.blade_angle + rate)
-		if lower:
+		if vehicle.manipulate and lower:
 			vehicle.blade_angle = maxf(-0.65, vehicle.blade_angle - rate)
 		if Input.is_key_pressed(KEY_Z):
 			vehicle.blade_tilt = maxf(-0.28, vehicle.blade_tilt - rate)
@@ -145,6 +204,27 @@ func _unhandled_input(event: InputEvent) -> void:
 		_toggle_menu()
 		get_viewport().set_input_as_handled()
 		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F and (panel == null or not panel.visible):
+		if str(terrain.spec.get("id", "")) != "rene-levasseur":
+			_flash_notice("Dig not available here yet")
+		else:
+			vehicle.set_manipulate(not vehicle.manipulate)
+			_flash_manipulate()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventMouseButton and event.pressed and (panel == null or not panel.visible):
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			camera.cycle_zoom(-1)
+			get_viewport().set_input_as_handled()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			camera.cycle_zoom(1)
+			get_viewport().set_input_as_handled()
+	if event is InputEventKey and event.pressed and not event.echo and panel and panel.visible:
+		var key := event as InputEventKey
+		if key.keycode == KEY_ENTER or key.keycode == KEY_KP_ENTER:
+			_teleport_pin()
+			get_viewport().set_input_as_handled()
+			return
 	if panel and panel.visible:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -160,31 +240,32 @@ func _world() -> void:
 	sky_mat.rayleigh_coefficient = 2.4
 	sky_mat.mie_coefficient = 0.035
 	sky_mat.mie_eccentricity = 0.78
-	sky_mat.turbidity = 6.0
-	sky_mat.ground_color = Color(0.32, 0.30, 0.26)
-	sky_mat.energy_multiplier = 1.05
+	sky_mat.ground_color = Color(0.14, 0.18, 0.14)
+	sky_mat.energy_multiplier = 0.82
+	sky_mat.mie_coefficient = 0.045
+	sky_mat.turbidity = 7.0
 	sky.sky_material = sky_mat
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 0.7
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 0.68
+	env.tonemap_exposure = 0.84
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-	env.fog_density = 0.00022
-	env.fog_aerial_perspective = 0.72
-	env.fog_light_color = Color(0.62, 0.72, 0.84)
-	env.fog_sun_scatter = 0.18
+	env.fog_density = 0.00015
+	env.fog_aerial_perspective = 0.78
+	env.fog_light_color = Color(0.70, 0.76, 0.8)
+	env.fog_sun_scatter = 0.05
+	# Denser below the bench, so the reservoir carries the mist.
+	env.fog_height = 351.5
+	env.fog_height_density = 0.045
 	if RenderingServer.get_current_rendering_method() == "forward_plus":
 		env.ssao_enabled = true
-		env.ssao_radius = 2.2
-		env.ssao_intensity = 1.6
-		env.ssil_enabled = true
-		env.sdfgi_enabled = true
-		env.sdfgi_cascades = 4
-		env.sdfgi_min_cell_size = 0.4
-		env.sdfgi_use_occlusion = true
+		env.ssao_radius = 1.1
+		env.ssao_intensity = 0.7
+		env.ssil_enabled = false
+		env.sdfgi_enabled = false
 		env.volumetric_fog_enabled = false
 	world = env
 	var world_env := WorldEnvironment.new()
@@ -196,19 +277,20 @@ func _world() -> void:
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	var fill := DirectionalLight3D.new()
 	fill.rotation_degrees = Vector3(-24.0, -150.0, 0.0)
-	fill.light_energy = 0.46
+	fill.light_energy = 0.22
+	fill.light_color = Color(0.75, 0.82, 0.92)
 	fill.shadow_enabled = false
 	add_child(fill)
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 	sun.directional_shadow_max_distance = 260.0
-	sun.directional_shadow_split_1 = 0.08
-	sun.directional_shadow_split_2 = 0.22
-	sun.directional_shadow_split_3 = 0.5
-	sun.shadow_bias = 0.18
-	sun.shadow_normal_bias = 2.4
+	sun.directional_shadow_split_1 = 0.05
+	sun.directional_shadow_split_2 = 0.14
+	sun.directional_shadow_split_3 = 0.34
+	sun.shadow_bias = 0.1
+	sun.shadow_normal_bias = 1.6
 	sun.shadow_blur = 2.2
-	sun.light_angular_distance = 0.45
+	sun.light_angular_distance = 0.12
 	sun.directional_shadow_blend_splits = true
 	add_child(sun)
 
@@ -222,8 +304,19 @@ func _load_sites() -> void:
 	_open_site(0)
 
 
-func _open_site(index: int) -> void:
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and terrain:
+		terrain.save_edits()
+
+
+func _open_site(index: int, at: Vector2 = Vector2(-1.0e9, -1.0e9)) -> void:
+	if terrain and terrain.field != null:
+		terrain.save_edits()
 	site_index = index
+	vehicle.flying = false
+	vehicle.gravity_scale = 1.0
+	if kind == "drone":
+		_activate("robot")
 	var spec: Dictionary = sites[index]
 	var albedo: Texture2D = load("res://data/%s" % str(spec["color"]))
 	print("loading ", spec["name"])
@@ -232,8 +325,13 @@ func _open_site(index: int) -> void:
 	var yaw_v := float(spec.get("yaw", 0.0))
 	var sx := float(spec["spawn"][0])
 	var sz := float(spec["spawn"][1])
+	if at.x > -1.0e8:
+		var landed := _snap_land(at.x, at.y)
+		sx = landed.x
+		sz = landed.y
 	_place(vehicle, sx, sz, yaw_v)
-	vehicle.blade_angle = -0.5
+	if not vehicle.manipulate:
+		vehicle.blade_angle = 0.4
 	vehicle.linear_velocity = Vector3.ZERO
 	vehicle.angular_velocity = Vector3.ZERO
 	_place(human, sx + 14.0, sz - 10.0, yaw_v)
@@ -241,6 +339,8 @@ func _open_site(index: int) -> void:
 		_place(human, sx, sz, yaw_v)
 		_place(vehicle, sx + 14.0, sz - 10.0, yaw_v)
 	terrain.focus = active.global_position if active else vehicle.global_position
+	if camera.camera:
+		camera.camera.far = 14000.0
 	_tune_site()
 	print("site ", spec["name"], " cut ", terrain.field.cut_m3, " fill ", terrain.field.fill_m3)
 
@@ -248,13 +348,30 @@ func _open_site(index: int) -> void:
 func _tune_site() -> void:
 	if world == null:
 		return
+	_place_sun()
 	var forest := bool(terrain.spec.get("forest", false))
 	world.ambient_light_energy = 1.15 if forest else 0.62
 	world.tonemap_exposure = 0.92 if forest else 0.7
 	if world.ssao_enabled:
 		world.ssao_intensity = 0.65 if forest else 1.1
 	if sun:
-		sun.light_energy = 1.35 if forest else 1.1
+		sun.light_energy = 1.15 if forest else 1.05
+
+
+func _place_sun() -> void:
+	if sun == null or terrain == null or terrain.spec.is_empty():
+		return
+	var lat := float(terrain.spec["lat"]) if terrain.spec.has("lat") else 51.43
+	# 16 November, Spencer declination. Noon elevation = 90° − latitude + declination.
+	var decl := 23.45 * sin(deg_to_rad(360.0 / 365.0 * (284.0 + 320.0)))
+	var elevation := clampf(90.0 - lat + decl, 6.0, 48.0)
+	# +Z is north in these tiles, and a DirectionalLight shines along -Z, so yaw 180
+	# sends the November sun from the south.
+	sun.rotation_degrees = Vector3(-elevation, 180.0, 0.0)
+	sun.light_color = Color(1.0, 0.9, 0.76) if elevation < 24.0 else Color(1.0, 0.96, 0.9)
+	if terrain.water and terrain.water.material_override is ShaderMaterial:
+		var beam := -sun.global_transform.basis.z
+		(terrain.water.material_override as ShaderMaterial).set_shader_parameter("sun_dir", beam)
 
 
 func _place(body: Node3D, x: float, z: float, yaw_v: float) -> void:
@@ -276,15 +393,14 @@ func _place(body: Node3D, x: float, z: float, yaw_v: float) -> void:
 
 func _activate(next: String) -> void:
 	kind = next
-	vehicle.set_physics_process(next == "robot")
-	vehicle.visible = next == "robot"
+	var drone := next == "drone"
+	vehicle.flying = drone
+	vehicle.gravity_scale = 0.0 if drone else 1.0
+	vehicle.set_physics_process(next == "robot" or drone)
+	vehicle.visible = next != "human"
 	human.set_physics_process(next == "human")
 	human.visible = next == "human"
-	match next:
-		"robot":
-			active = vehicle
-		_:
-			active = human
+	active = human if next == "human" else vehicle
 	camera.target = active
 	camera.configure(next)
 	camera.yaw_offset = 0.0
@@ -307,10 +423,10 @@ func _ui() -> void:
 	menu_root.add_child(dim)
 	panel = PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.offset_left = -200.0
-	panel.offset_top = -248.0
-	panel.offset_right = 200.0
-	panel.offset_bottom = 248.0
+	panel.offset_left = -500.0
+	panel.offset_top = -330.0
+	panel.offset_right = 500.0
+	panel.offset_bottom = 330.0
 	panel.visible = false
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var style := StyleBoxFlat.new()
@@ -324,39 +440,110 @@ func _ui() -> void:
 	style.content_margin_top = 16
 	style.content_margin_bottom = 16
 	panel.add_theme_stylebox_override("panel", style)
+	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	panel.offset_left = 28.0
+	panel.offset_top = 22.0
+	panel.offset_right = -28.0
+	panel.offset_bottom = -22.0
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
+	box.set_anchors_preset(Control.PRESET_FULL_RECT)
 	panel.add_child(box)
-	var title := Label.new()
-	title.text = "Settings"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(title)
-	var body_label := Label.new()
-	body_label.text = "Body"
-	box.add_child(body_label)
-	var bodies := HBoxContainer.new()
-	bodies.add_theme_constant_override("separation", 8)
-	box.add_child(bodies)
-	for entry in [["Robot", "robot"], ["Human", "human"]]:
-		var b := _menu_button(entry[0])
-		b.pressed.connect(_activate.bind(entry[1]))
-		bodies.add_child(b)
-	var place_label := Label.new()
-	place_label.text = "Region"
-	box.add_child(place_label)
-	for i in sites.size():
-		var spec: Dictionary = sites[i]
-		var region := _menu_button(str(spec["name"]))
-		var site_i := i
-		region.pressed.connect(func() -> void: _go_region(site_i))
-		box.add_child(region)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 8)
+	box.add_child(top)
 	var resume := _menu_button("Resume")
+	resume.custom_minimum_size = Vector2(110, 30)
+	resume.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	resume.pressed.connect(_close_menu)
-	box.add_child(resume)
+	top.add_child(resume)
 	var quit := _menu_button("Quit")
+	quit.custom_minimum_size = Vector2(90, 30)
+	quit.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	quit.pressed.connect(_quit_game)
-	box.add_child(quit)
+	top.add_child(quit)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(spacer)
+	for entry in [["Robot", "robot"], ["Human", "human"], ["Drone", "drone"]]:
+		var b := _menu_button(entry[0])
+		b.custom_minimum_size = Vector2(72, 30)
+		b.size_flags_horizontal = Control.SIZE_SHRINK_END
+		b.pressed.connect(_activate.bind(entry[1]))
+		top.add_child(b)
+	var detail := _menu_button("Imagery 8")
+	detail.custom_minimum_size = Vector2(96, 30)
+	detail.size_flags_horizontal = Control.SIZE_SHRINK_END
+	detail.pressed.connect(func() -> void:
+		terrain.imagery_zoom = 6 if terrain.imagery_zoom >= 10 else terrain.imagery_zoom + 2
+		detail.text = "Imagery %d" % terrain.imagery_zoom
+	)
+	top.add_child(detail)
+	var map_host := Control.new()
+	map_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	map_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	map_host.custom_minimum_size = Vector2(640, 420)
+	box.add_child(map_host)
+	north_map = NorthMap.new()
+	north_map.set_anchors_preset(Control.PRESET_FULL_RECT)
+	north_map.pinned.connect(_on_pin)
+	map_host.add_child(north_map)
+	var overlay := Control.new()
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map_host.add_child(overlay)
+	search_box = LineEdit.new()
+	search_box.custom_minimum_size = Vector2(250, 32)
+	search_box.placeholder_text = "lat, lon or a place"
+	search_box.focus_mode = Control.FOCUS_ALL
+	search_box.mouse_filter = Control.MOUSE_FILTER_STOP
+	search_box.text_submitted.connect(_search_submitted)
+	overlay.add_child(search_box)
+	home_button = _menu_button("Home: island")
+	home_button.custom_minimum_size = Vector2(132, 30)
+	home_button.pressed.connect(func() -> void: _go_region(0))
+	overlay.add_child(home_button)
+	pin_label = Label.new()
+	pin_label.text = "Click the map"
+	pin_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(pin_label)
+	recent_box = VBoxContainer.new()
+	recent_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(recent_box)
+	_load_places()
+	_load_recent()
+	_mark_map()
+	manipulate_label = Label.new()
+	manipulate_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	manipulate_label.offset_top = 28.0
+	manipulate_label.offset_bottom = 64.0
+	manipulate_label.offset_left = -120.0
+	manipulate_label.offset_right = 120.0
+	manipulate_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	manipulate_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	manipulate_label.visible = false
+	ui.add_child(manipulate_label)
 	menu_root.add_child(panel)
+
+
+func _layout_map_chrome() -> void:
+	if north_map == null or search_box == null or panel == null or not panel.visible:
+		return
+	if north_map.size.x < 40.0:
+		return
+	var disk := north_map.disk_rect()
+	var local := north_map.position + disk.position
+	search_box.position = local + Vector2(14.0, 14.0)
+	search_box.size = Vector2(minf(268.0, disk.size.x * 0.42), 32.0)
+	if home_button:
+		home_button.position = local + Vector2(disk.size.x - 146.0, 14.0)
+		home_button.size = Vector2(132.0, 30.0)
+	if recent_box:
+		recent_box.position = search_box.position + Vector2(0.0, 38.0)
+		recent_box.size = Vector2(168.0, 160.0)
+	if pin_label:
+		pin_label.position = local + Vector2(14.0, disk.size.y - 32.0)
+		pin_label.size = Vector2(260.0, 22.0)
 
 
 func _menu_button(text: String) -> Button:
@@ -366,6 +553,326 @@ func _menu_button(text: String) -> Button:
 	b.custom_minimum_size = Vector2(0, 36)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return b
+
+
+func _snap_land(x: float, z: float) -> Vector2:
+	var water := float(terrain.spec["water"]) if terrain.spec.get("water") != null else -9999.0
+	if terrain.sample(x, z) > water + 1.5:
+		return Vector2(x, z)
+	var step := maxf(float(terrain.spec["spacing"]), 20.0)
+	for ring_i in range(1, 48):
+		var radius := step * float(ring_i)
+		for k in 16:
+			var ang := float(k) / 16.0 * TAU
+			var px := x + cos(ang) * radius
+			var pz := z + sin(ang) * radius
+			if terrain.sample(px, pz) > water + 1.5:
+				return Vector2(px, pz)
+	return Vector2(float(terrain.spec["spawn"][0]), float(terrain.spec["spawn"][1]))
+
+
+func _on_pin(lat: float, lon: float) -> void:
+	if pin_label:
+		pin_label.text = "%.4f°, %.4f°" % [lat, lon]
+
+
+func _load_places() -> void:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/places.json"))
+	if parsed is Array:
+		places = parsed
+
+
+func _coord_token(token: String) -> float:
+	var t := token.strip_edges().to_upper()
+	var hemi := 0.0
+	if t.ends_with("N") or t.ends_with("E") or t.begins_with("N") or t.begins_with("E"):
+		hemi = 1.0
+	elif t.ends_with("S") or t.ends_with("W") or t.begins_with("S") or t.begins_with("W"):
+		hemi = -1.0
+	t = t.replace("N", "").replace("S", "").replace("E", "").replace("W", "")
+	if not t.is_valid_float():
+		return 9999.0
+	var value := float(t)
+	if hemi < 0.0 and value > 0.0:
+		value = -value
+	return value
+
+
+func _parse_latlon(text: String) -> Vector2:
+	var parts := text.replace(",", " ").replace(";", " ").split(" ", false)
+	if parts.size() != 2:
+		return Vector2(999.0, 999.0)
+	var lat := _coord_token(parts[0])
+	var lon := _coord_token(parts[1])
+	if absf(lat) > 90.0 or absf(lon) > 180.0 or lat >= 900.0 or lon >= 900.0:
+		return Vector2(999.0, 999.0)
+	return Vector2(lat, lon)
+
+
+func _find_place(text: String) -> Dictionary:
+	var query := text.strip_edges().to_lower()
+	if query == "":
+		return {}
+	var best: Dictionary = {}
+	var best_rank := 99
+	var best_len := 9999
+	for item in places:
+		var spec: Dictionary = item
+		var fields: PackedStringArray = PackedStringArray()
+		fields.append(str(spec.get("n", "")))
+		fields.append(str(spec.get("a", "")))
+		for piece in str(spec.get("alt", "")).split(";", false):
+			fields.append(piece)
+		for field in fields:
+			var name := field.strip_edges().to_lower()
+			if name == "":
+				continue
+			var rank := 99
+			if name == query:
+				rank = 0
+			elif name.begins_with(query):
+				rank = 1
+			elif name.contains(query):
+				rank = 2
+			if rank < best_rank or (rank == best_rank and name.length() < best_len):
+				best_rank = rank
+				best_len = name.length()
+				best = spec
+	return best
+
+
+func _go_pin(lat: float, lon: float) -> void:
+	if north_map:
+		north_map.drop_latlon(lat, lon)
+	_teleport_pin()
+
+
+func _search_submitted(text: String) -> void:
+	var coord := _parse_latlon(text)
+	if coord.x < 900.0:
+		_go_pin(coord.x, coord.y)
+		return
+	var hit := _find_place(text)
+	if hit.is_empty():
+		if pin_label:
+			pin_label.text = "No northern place"
+		return
+	_go_pin(float(hit["lat"]), float(hit["lon"]))
+
+
+func _teleport_pin() -> void:
+	if north_map == null or not north_map.pin_ok:
+		return
+	var lat := north_map.pin.x
+	var lon := north_map.pin.y
+	_remember_pin(lat, lon)
+	for i in sites.size():
+		var spec: Dictionary = sites[i]
+		if not spec.has("bounds") or not spec.has("frame"):
+			continue
+		if not Geo.inside(lat, lon, spec["bounds"]):
+			continue
+		var local := Geo.to_local(lat, lon, spec["frame"])
+		_open_site(i, local)
+		terrain.ensure_patch(Vector2(active.global_position.x, active.global_position.z))
+		terrain.rebuild_around(active.global_position)
+		camera.snap()
+		camera.hold = false
+		_close_menu()
+		return
+	if lat < 45.0:
+		_flash_notice("Coming soon")
+		return
+	var streamed: Dictionary = terrain.open_stream(lat, lon, _grain())
+	if not streamed.is_empty():
+		foliage.rebuild(terrain, terrain.color_tex)
+		_place(vehicle, 0.0, 0.0, 0.0)
+		_place(human, 14.0, -10.0, 0.0)
+		vehicle.flying = true
+		vehicle.gravity_scale = 0.0
+		_activate("drone")
+		if camera.camera:
+			camera.camera.far = 80000.0
+		terrain.focus = active.global_position
+		_tune_site()
+		camera.snap()
+		camera.hold = false
+		_close_menu()
+		return
+	var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/north.json"))
+	if meta == null:
+		_flash_notice("Coming soon")
+		return
+	var landed: Dictionary = terrain.open_north(meta, lat, lon, _grain())
+	if landed.is_empty() or terrain.field == null:
+		_flash_notice("Coming soon")
+		return
+	var landed_h := terrain.sample(float(landed["x"]), float(landed["z"]))
+	if is_nan(landed_h) or is_inf(landed_h):
+		_flash_notice("Coming soon")
+		return
+	foliage.rebuild(terrain, terrain.color_tex)
+	var yaw_v := 0.0
+	_place(vehicle, float(landed["x"]), float(landed["z"]), yaw_v)
+	if camera.camera:
+		camera.camera.far = 280000.0 if float(terrain.spec["spacing"]) > 100.0 else 14000.0
+	if not vehicle.manipulate:
+		vehicle.blade_angle = 0.4
+	vehicle.linear_velocity = Vector3.ZERO
+	vehicle.angular_velocity = Vector3.ZERO
+	_place(human, float(landed["x"]) + 14.0, float(landed["z"]) - 10.0, yaw_v)
+	if kind == "human":
+		_place(human, float(landed["x"]), float(landed["z"]), yaw_v)
+	terrain.focus = active.global_position
+	_tune_site()
+	camera.snap()
+	camera.hold = false
+	if pin_label:
+		pin_label.text = "Landed %.4f°, %.4f°" % [float(landed["lat"]), float(landed["lon"])]
+	_close_menu()
+
+
+func _remember_pin(lat: float, lon: float) -> void:
+	if dig_test or shot_dir != "" or bench:
+		return
+	recent.push_front({"lat": lat, "lon": lon})
+	while recent.size() > 5:
+		recent.pop_back()
+	DirAccess.make_dir_recursive_absolute("user://world")
+	var file := FileAccess.open("user://world/pins.json", FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify({"pins": recent}))
+	_show_recent()
+
+
+func _load_recent() -> void:
+	if not FileAccess.file_exists("user://world/pins.json"):
+		return
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string("user://world/pins.json"))
+	if parsed is Dictionary:
+		recent = parsed.get("pins", [])
+	_show_recent()
+
+
+func _show_recent() -> void:
+	if recent_box == null:
+		return
+	for child in recent_box.get_children():
+		child.queue_free()
+	for pin in recent:
+		var lat := float(pin["lat"])
+		var lon := float(pin["lon"])
+		var b := _menu_button("%.2f, %.2f" % [lat, lon])
+		b.custom_minimum_size = Vector2(0, 26)
+		b.pressed.connect(_go_pin.bind(lat, lon))
+		recent_box.add_child(b)
+
+
+func _mark_map() -> void:
+	if north_map == null or sites.is_empty():
+		return
+	var island: Dictionary = sites[0]
+	if island.has("bounds"):
+		var b: Dictionary = island["bounds"]
+		var poly := PackedVector2Array()
+		for i in 24:
+			var t := float(i) / 24.0
+			var lat: float
+			var lon: float
+			if t < 0.25:
+				var u := t / 0.25
+				lat = float(b["south"])
+				lon = lerpf(float(b["west"]), float(b["east"]), u)
+			elif t < 0.5:
+				var u2 := (t - 0.25) / 0.25
+				lon = float(b["east"])
+				lat = lerpf(float(b["south"]), float(b["north"]), u2)
+			elif t < 0.75:
+				var u3 := (t - 0.5) / 0.25
+				lat = float(b["north"])
+				lon = lerpf(float(b["east"]), float(b["west"]), u3)
+			else:
+				var u4 := (t - 0.75) / 0.25
+				lon = float(b["west"])
+				lat = lerpf(float(b["north"]), float(b["south"]), u4)
+			poly.append(Vector2(lat, lon))
+		north_map.set_highlight(poly)
+	north_map.set_marks([])
+
+
+func _shot_altitude(lat: float, lon: float, near_name: String, far_name: String) -> void:
+	north_map.drop_latlon(lat, lon)
+	_teleport_pin()
+	camera.hold = true
+	vehicle.visible = false
+	var ground := terrain.sample(0.0, 0.0)
+	camera.camera.global_position = Vector3(-280.0, ground + 500.0, -280.0)
+	camera.camera.look_at(Vector3(220.0, ground, 220.0), Vector3.UP)
+	await _shot(near_name)
+	camera.camera.global_position = Vector3(-1400.0, ground + 3000.0, -1400.0)
+	camera.camera.look_at(Vector3(600.0, ground, 600.0), Vector3.UP)
+	await _shot(far_name)
+
+
+func _frame_spot(at: Vector3, look: Vector3, eye: float) -> void:
+	vehicle.visible = false
+	var ground_y := terrain.sample(at.x, at.z)
+	vehicle.global_position = Vector3(at.x, ground_y + 0.6, at.z)
+	camera.hold = true
+	camera.camera.global_position = Vector3(at.x, ground_y + eye, at.z)
+	var look_y := terrain.sample(look.x, look.z)
+	camera.camera.look_at(Vector3(look.x, look_y + 1.6, look.z), Vector3.UP)
+	terrain.focus = camera.camera.global_position
+	terrain.rebuild_around(camera.camera.global_position)
+
+
+func _frame_reservoir() -> void:
+	var origin := vehicle.global_position
+	# The reservoir is west of this bench. Look that way, from just above the moss.
+	var aim := Vector3(-0.92, 0.0, 0.28)
+	vehicle.visible = false
+	camera.hold = true
+	var eye := terrain.sample(origin.x, origin.z) + 3.4
+	camera.camera.global_position = Vector3(origin.x, eye, origin.z) - aim * 4.0
+	camera.camera.look_at(origin + aim * 90.0 + Vector3(0.0, 1.2, 0.0), Vector3.UP)
+
+
+func _frame_spawn_shot() -> void:
+	var fwd := vehicle.forward()
+	camera.hold = true
+	var pitch := camera.pitch_up
+	var focus := vehicle.global_position + fwd * 7.5 + Vector3.UP * camera.anchor_lift
+	camera.camera.global_position = focus - fwd * camera.distance * cos(pitch) + Vector3.UP * camera.distance * sin(pitch)
+	camera.camera.look_at(focus, Vector3.UP)
+
+
+func _run_map_test() -> void:
+	var back := Geo.polar_inverse(Geo.polar_forward(78.05, 13.64))
+	print("roundtrip ", back)
+	var svalbard := _find_place("svalbard")
+	var yamal := _find_place("yamal")
+	var quebec := _find_place("northern quebec")
+	var island := _find_place("rene")
+	var places_ok := absf(float(svalbard.get("lat", 0.0)) - 78.05) < 0.2 and absf(float(yamal.get("lat", 0.0)) - 70.49) < 0.2 and absf(float(quebec.get("lat", 0.0)) - 58.1) < 0.2 and absf(float(island.get("lon", 0.0)) + 69.08) < 0.2
+	print("places ", "ok" if places_ok else "FAIL", " ", svalbard.get("n"), " ", yamal.get("n"), " ", quebec.get("n"), " ", island.get("n"))
+	north_map.drop_latlon(51.45, -69.09)
+	_teleport_pin()
+	var island_id := str(terrain.spec.get("id"))
+	var island_h := terrain.sample(active.global_position.x, active.global_position.z)
+	print("island-pin ", island_id, " ", active.global_position, " h ", island_h)
+	north_map.drop_latlon(78.04862, 13.6441)
+	_teleport_pin()
+	var europe_id := str(terrain.spec.get("id"))
+	var europe_h := terrain.sample(active.global_position.x, active.global_position.z)
+	print("svalbard-pin ", europe_id, " ", active.global_position, " h ", europe_h)
+	north_map.drop_latlon(62.0, -70.0)
+	_teleport_pin()
+	var far_id := str(terrain.spec.get("id"))
+	var far_h := terrain.sample(active.global_position.x, active.global_position.z)
+	print("lowres-pin ", far_id, " ", active.global_position, " h ", far_h)
+	var ok := places_ok and island_id == "rene-levasseur" and europe_id == "northern-2" and far_id.begins_with("north-") and island_h > 300.0 and far_h > 1.5 and absf(active.global_position.x) < 5000.0
+	print("map-test ", "ok" if ok else "FAIL")
+	get_tree().quit(0 if ok else 1)
 
 
 func _go_region(index: int) -> void:
@@ -449,6 +956,16 @@ func _read_args() -> void:
 			bench = true
 		if arg == "--dig-test":
 			dig_test = true
+		if arg == "--map-test":
+			map_test = true
+		if arg == "--teleport-test":
+			teleport_test = true
+		if arg == "--camera-test":
+			camera_test = true
+		if arg == "--stream-smoke":
+			stream_smoke = true
+		if arg == "--fly-test":
+			fly_test = true
 	if OS.get_environment("ROLEPLAY_CAPTURE") == "1":
 		capture = true
 	if OS.has_feature("web"):
@@ -466,7 +983,60 @@ func _shots() -> void:
 	for _i in 4:
 		await get_tree().process_frame
 	_activate("robot")
-	vehicle.blade_angle = -0.5
+	vehicle.set_manipulate(false)
+	if _take("dozer-close"):
+		vehicle.blade_angle = -0.12
+		vehicle._pose_blade()
+		var fwd0 := vehicle.forward()
+		var side0 := Vector3(fwd0.z, 0.0, -fwd0.x)
+		camera.hold = true
+		camera.camera.global_position = vehicle.global_position + fwd0 * 5.2 + side0 * 4.6 + Vector3.UP * 2.8
+		camera.camera.look_at(vehicle.global_position + fwd0 * 1.5 + Vector3.UP * 0.85, Vector3.UP)
+		await get_tree().process_frame
+		await _shot("dozer-close")
+	if _take("map-island") or _take("map-svalbard"):
+		_open_menu()
+		for _frame in 4:
+			await get_tree().process_frame
+		if north_map and north_map.size.x < 20.0:
+			north_map.size = Vector2(640, 540)
+		if _take("map-island"):
+			north_map.drop_latlon(51.4427, -69.0854)
+			await get_tree().process_frame
+			await _shot("map-island")
+			_teleport_pin()
+			_frame_spawn_shot()
+			for _frame2 in 3:
+				await get_tree().process_frame
+			await _shot("spawn-island")
+			if _take("island-shore"):
+				_frame_reservoir()
+				for _shore in 3:
+					await get_tree().process_frame
+				await _shot("island-shore")
+			_open_menu()
+	if _take("cmp-shore") or _take("cmp-forest") or _take("cmp-rock"):
+		_close_menu()
+		if _take("cmp-shore"):
+			_frame_spot(Vector3(2240.0, 0.0, 3160.0), Vector3(2050.0, 0.0, 3000.0), 4.2)
+			await _shot("cmp-shore")
+		if _take("cmp-forest"):
+			_frame_spot(Vector3(2268.0, 0.0, 2980.0), Vector3(2480.0, 0.0, 3140.0), 6.5)
+			await _shot("cmp-forest")
+		if _take("cmp-rock"):
+			_frame_spot(Vector3(2540.0, 0.0, 920.0), Vector3(2465.0, 0.0, 790.0), 14.0)
+			await _shot("cmp-rock")
+			for _frame3 in 2:
+				await get_tree().process_frame
+		if _take("map-svalbard"):
+			north_map.drop_latlon(78.04862, 13.6441)
+			await get_tree().process_frame
+			await _shot("map-svalbard")
+			_teleport_pin()
+			_frame_spawn_shot()
+			for _frame4 in 3:
+				await get_tree().process_frame
+			await _shot("spawn-svalbard")
 	if _take("n1") or _take("hidden"):
 		camera.hold = false
 		camera.snap()
@@ -491,6 +1061,7 @@ func _shots() -> void:
 		vehicle.freeze = false
 		vehicle.set_physics_process(true)
 		shot_drive = true
+		vehicle.set_manipulate(true)
 		vehicle.blade_angle = -0.55
 		var walked := 0.0
 		while walked < 4.0:
@@ -502,6 +1073,15 @@ func _shots() -> void:
 		fwd = vehicle.forward()
 		await _frame_trench(fwd, 0.0)
 		await _shot("dig-after")
+	if _take("drone-svalbard-500") or _take("drone-yamal-500") or _take("drone-baffin-500"):
+		terrain.imagery_zoom = 10
+		terrain.stream_radius = 1
+		if _take("drone-svalbard-500"):
+			await _shot_altitude(78.2, 16.0, "drone-svalbard-500", "drone-svalbard-3km")
+		if _take("drone-yamal-500"):
+			await _shot_altitude(70.8, 68.5, "drone-yamal-500", "drone-yamal-3km")
+		if _take("drone-baffin-500"):
+			await _shot_altitude(70.0, -70.0, "drone-baffin-500", "drone-baffin-3km")
 	for i in range(1, sites.size()):
 		var key := "n%d" % (i + 1)
 		if not _take(key):
@@ -517,8 +1097,138 @@ func _shots() -> void:
 	get_tree().quit()
 
 
+func _run_teleport_test() -> void:
+	var points: Array[Vector2] = [
+		Vector2(78.04862, 13.6441),
+		Vector2(70.49304, 67.91264),
+		Vector2(58.1, -68.4),
+		Vector2(53.3, -70.2),
+		Vector2(64.15, -21.9),
+		Vector2(69.65, 18.96),
+		Vector2(71.29, -156.79),
+		Vector2(60.72, -135.05),
+		Vector2(68.97, 33.09),
+		Vector2(51.05, -114.08),
+		Vector2(46.8, -71.2),
+		Vector2(74.0, -90.0),
+		Vector2(80.0, 20.0),
+	]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 42
+	for _i in 10:
+		points.append(Vector2(rng.randf_range(46.0, 78.0), rng.randf_range(-170.0, 170.0)))
+	var failed := 0
+	for p in points:
+		north_map.drop_latlon(p.x, p.y)
+		_teleport_pin()
+		var h := terrain.sample(active.global_position.x, active.global_position.z)
+		var finite := not is_nan(h) and not is_inf(h)
+		var near := absf(active.global_position.x) < 8000.0 and absf(active.global_position.z) < 8000.0
+		var sane := h > -11000.0 and h < 9000.0
+		var grounded := absf(active.global_position.y - h) < 8.0
+		if not finite or not near or not sane or not grounded or terrain.field == null:
+			failed += 1
+			print("teleport FAIL ", p, " h ", h, " at ", active.global_position, " id ", terrain.spec.get("id"))
+		else:
+			print("teleport ok ", p, " h ", snapped(h, 0.1), " ", terrain.spec.get("id"))
+	print("teleport-test ", points.size(), " failed ", failed)
+	get_tree().quit(0 if failed == 0 else 1)
+
+
+func _flash_notice(text: String) -> void:
+	if manipulate_label == null:
+		return
+	manipulate_label.text = text
+	manipulate_label.modulate.a = 1.0
+	manipulate_label.visible = true
+
+
+func _flash_manipulate() -> void:
+	_flash_notice("Blade down" if vehicle.manipulate else "Blade up")
+
+
+func _run_fly_test() -> void:
+	terrain.stream_radius = 0
+	terrain.imagery_zoom = 7
+	Engine.time_scale = 6.0
+	var points: Array[Vector2] = [
+		Vector2(78.2, 16.0),
+		Vector2(70.8, 68.5),
+		Vector2(70.0, -70.0),
+		Vector2(64.2, -153.0),
+		Vector2(60.0, -100.0),
+		Vector2(66.0, 30.0),
+		Vector2(55.0, 10.0),
+		Vector2(50.0, -80.0),
+		Vector2(72.0, 100.0),
+		Vector2(68.0, -140.0),
+	]
+	var failed := 0
+	for p in points:
+		north_map.drop_latlon(p.x, p.y)
+		_teleport_pin()
+		var elapsed := 0.0
+		while elapsed < 30.0:
+			await get_tree().physics_frame
+			elapsed += get_physics_process_delta_time()
+			vehicle.throttle = 0.65
+			vehicle.steer = sin(elapsed * 0.35)
+		var h := terrain.sample(vehicle.global_position.x, vehicle.global_position.z)
+		var id := str(terrain.spec.get("id"))
+		if is_nan(h) or is_inf(h) or not id.begins_with("stream-"):
+			failed += 1
+			print("fly FAIL ", p, " ", id, " h ", h)
+		else:
+			print("fly ok ", p, " ", id, " h ", snappedf(h, 0.1))
+	Engine.time_scale = 1.0
+	print("fly-test ", points.size(), " failed ", failed)
+	get_tree().quit(0 if failed == 0 else 1)
+
+
+func _run_camera_test() -> void:
+	vehicle.freeze = false
+	vehicle.set_manipulate(false)
+	camera.hold = false
+	camera.snap()
+	var vp := get_viewport().get_visible_rect().size
+	if vp.x < 16.0:
+		vp = Vector2(1280.0, 720.0)
+	var worst := 0.0
+	var lock := Vector2.ZERO
+	var locked := false
+	var elapsed := 0.0
+	var samples := 0
+	while elapsed < 30.0:
+		await get_tree().physics_frame
+		await get_tree().process_frame
+		elapsed += get_physics_process_delta_time()
+		var body := vehicle.global_position + Vector3.UP * camera.anchor_lift
+		var screen := camera.screen_of(body)
+		if not locked and elapsed > 0.8:
+			lock = screen
+			locked = true
+			var nx := screen.x / vp.x
+			var ny := screen.y / vp.y
+			print("camera lock ", snappedf(nx, 0.001), " ", snappedf(ny, 0.001), " px ", screen)
+			if ny < 0.53 or absf(nx - 0.5) > 0.06:
+				print("camera-test FAIL lock is not below center")
+				get_tree().quit(1)
+				return
+		if locked:
+			var err := screen.distance_to(lock)
+			worst = maxf(worst, err)
+			samples += 1
+			if err > 16.0:
+				print("camera-test FAIL drift ", snappedf(err, 0.1), " px at ", snappedf(elapsed, 0.01))
+				get_tree().quit(1)
+				return
+	print("camera-test ok samples ", samples, " worst_px ", snappedf(worst, 0.01))
+	get_tree().quit(0)
+
+
 func _run_dig_test() -> void:
 	vehicle.freeze = false
+	vehicle.set_manipulate(true)
 	vehicle.blade_angle = -0.55
 	vehicle.throttle = 1.0
 	vehicle.steer = 0.0

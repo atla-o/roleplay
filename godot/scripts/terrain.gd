@@ -1,6 +1,8 @@
 class_name TerrainWorld
 extends Node3D
 
+const _Tiles = preload("res://scripts/tile_stream.gd")
+
 const CHUNK := 32
 
 var field: Soil.Field
@@ -34,25 +36,45 @@ var fine_mesh: MeshInstance3D
 var punched: Array = []
 var fine_img: Image
 var fine_tex: ImageTexture
+var baseline: PackedFloat32Array
+var persist := true
+var site_id := ""
+# World metres = field metres - view_origin, so a far coarse window stays near the camera.
+var view_origin := Vector2.ZERO
+var imagery_zoom := 8
+var stream_radius := 1
 const WINDOW := 97
 const COL_SPACING := 0.5
 
 func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
+	var bytes := FileAccess.get_file_as_bytes("res://data/%s" % next_spec["heights"])
+	var heights := _decode_heights(str(next_spec["heights"]), bytes, float(next_spec["hmin"]), float(next_spec["hmax"]))
+	setup_heights(next_spec, heights, albedo, grain)
+
+
+func setup_heights(next_spec: Dictionary, heights: PackedFloat32Array, albedo: Texture2D, grain: Texture2D) -> void:
 	spec = next_spec
 	color_tex = albedo
 	grain_tex = grain
 	_clear()
 	var cols: int = spec["cols"]
 	var rows: int = spec["rows"]
-	var bytes := FileAccess.get_file_as_bytes("res://data/%s" % spec["heights"])
 	field = Soil.Field.new()
 	field.cols = cols
 	field.rows = rows
 	field.spacing = float(spec["spacing"])
-	field.heights = _decode_heights(str(spec["heights"]), bytes, float(spec["hmin"]), float(spec["hmax"]))
+	field.heights = heights
 	field.disturb = PackedByteArray()
 	field.disturb.resize(cols * rows)
 	field.changed = PackedInt32Array()
+	site_id = str(spec.get("id", "site"))
+	baseline = field.heights.duplicate()
+	if spec.has("view_origin"):
+		view_origin = Vector2(float(spec["view_origin"][0]), float(spec["view_origin"][1]))
+	else:
+		view_origin = Vector2.ZERO
+	if persist:
+		_load_edits()
 	_build_height_texture()
 	_build_disturb_texture()
 	mat = ShaderMaterial.new()
@@ -76,7 +98,130 @@ func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
 	_build_ring(spawn)
 
 
+## A window of the coarse polar grid, centred on land. Returns the local
+## spawn and the lat/lon actually used after a shore snap.
+func open_north(meta: Dictionary, lat: float, lon: float, grain: Texture2D) -> Dictionary:
+	var posts := int(meta["posts"])
+	var half_m := float(meta["half_m"])
+	var step := float(meta["step_m"])
+	var bytes := FileAccess.get_file_as_bytes("res://data/%s" % str(meta["heights"]))
+	var full := _decode_heights(str(meta["heights"]), bytes, float(meta["hmin"]), float(meta["hmax"]))
+	var projected := Geo.polar_forward(lat, lon)
+	var col := int(round((projected.x + half_m) / step))
+	var image_row := int(round((half_m - projected.y) / step))
+	var row := posts - 1 - image_row
+	col = clampi(col, 0, posts - 1)
+	row = clampi(row, 0, posts - 1)
+	if full[row * posts + col] < 1.5:
+		var found := _nearest_land(full, posts, col, row)
+		col = found.x
+		row = found.y
+	var radius := 8
+	var c0 := clampi(col - radius, 0, posts - 2)
+	var r0 := clampi(row - radius, 0, posts - 2)
+	var c1 := clampi(col + radius, c0 + 1, posts - 1)
+	var r1 := clampi(row + radius, r0 + 1, posts - 1)
+	var cols := c1 - c0 + 1
+	var rows := r1 - r0 + 1
+	var window := PackedFloat32Array()
+	window.resize(cols * rows)
+	var lo := 1.0e9
+	var hi := -1.0e9
+	for r in rows:
+		for c in cols:
+			var h: float = full[(r0 + r) * posts + (c0 + c)]
+			window[r * cols + c] = h
+			lo = minf(lo, h)
+			hi = maxf(hi, h)
+	var color_tex := load("res://data/%s" % str(meta["color"])) as Texture2D
+	var color_img: Image = color_tex.get_image() if color_tex != null else null
+	var paint := Image.create(cols, rows, false, Image.FORMAT_RGB8)
+	if color_img != null:
+		for r in rows:
+			# File row 0 is minimum Y. The photo's row 0 is maximum Y.
+			var src_row := posts - 1 - (r0 + (rows - 1 - r))
+			src_row = clampi(src_row, 0, color_img.get_height() - 1)
+			for c in cols:
+				var src_col := clampi(c0 + c, 0, color_img.get_width() - 1)
+				paint.set_pixel(c, r, color_img.get_pixel(src_col, src_row))
+	var albedo := ImageTexture.create_from_image(paint)
+	var spec_n := {
+		"id": "north-%d-%d" % [c0, r0],
+		"name": "North",
+		"cols": cols,
+		"rows": rows,
+		"spacing": step,
+		"hmin": lo,
+		"hmax": maxf(hi, lo + 1.0),
+		"repose": 34.0,
+		"water": 0.0,
+		"forest": false,
+		"lat": lat,
+		"spawn": [0.0, 0.0],
+		"view_origin": [float(col - c0) * step, float(row - r0) * step],
+	}
+	setup_heights(spec_n, window, albedo, grain)
+	var back_x := -half_m + float(col) * step
+	var back_y := -half_m + float(row) * step
+	var ll := Geo.polar_inverse(Vector2(back_x, back_y))
+	return {"x": 0.0, "z": 0.0, "lat": ll.x, "lon": ll.y}
+
+
+## Streamed web-mercator ground. Returns empty if a tile cannot be fetched,
+## so the caller can fall back without crashing.
+func open_stream(lat: float, lon: float, grain: Texture2D) -> Dictionary:
+	var zoom := clampi(imagery_zoom, 5, 11)
+	var patch: Dictionary = _Tiles.fetch_patch(lat, lon, zoom, stream_radius)
+	if patch.is_empty():
+		return {}
+	var posts := int(patch["posts"])
+	var tile_m := float(patch["tile_m"])
+	var step := tile_m / 128.0
+	var frac: Vector2 = _Tiles.fraction(lat, lon, zoom)
+	var field_x := tile_m * (float(stream_radius) + frac.x)
+	var field_z := tile_m * (float(stream_radius) + 1.0 - frac.y)
+	var spec_n := {
+		"id": "stream-%d-%d-%d" % [zoom, int(patch["center"].x), int(patch["center"].y)],
+		"name": "North",
+		"cols": posts,
+		"rows": posts,
+		"spacing": step,
+		"hmin": float(patch["hmin"]),
+		"hmax": maxf(float(patch["hmax"]), float(patch["hmin"]) + 1.0),
+		"repose": 34.0,
+		"water": 0.0,
+		"forest": false,
+		"lat": lat,
+		"spawn": [0.0, 0.0],
+		"view_origin": [field_x, field_z],
+		"diggable": false,
+	}
+	var albedo := ImageTexture.create_from_image(patch["image"])
+	setup_heights(spec_n, patch["heights"], albedo, grain)
+	return {"x": 0.0, "z": 0.0, "lat": lat, "lon": lon}
+
+
+func _nearest_land(full: PackedFloat32Array, posts: int, col: int, row: int) -> Vector2i:
+	var best := Vector2i(col, row)
+	var best_d := 1.0e12
+	for r in posts:
+		var dz := r - row
+		for c in posts:
+			if full[r * posts + c] < 1.5:
+				continue
+			var dx := c - col
+			var d := dx * dx + dz * dz
+			if d < best_d:
+				best_d = d
+				best = Vector2i(c, r)
+	return best
+
+
 func sample(x: float, z: float) -> float:
+	return _sample_field(x + view_origin.x, z + view_origin.y)
+
+
+func _sample_field(x: float, z: float) -> float:
 	if patch != null and patch.covers(x, z):
 		return patch.sample(x, z)
 	var span := _detail_span()
@@ -123,12 +268,16 @@ func _coarse_sample(x: float, z: float) -> float:
 
 func stamp_tracks(east: float, north: float, fx: float, fz: float) -> void:
 	ensure_patch(Vector2(east, north))
+	if patch == null:
+		return
 	if Soil.stamp_tracks(patch.field, east - patch.origin.x, north - patch.origin.y, fx, fz):
 		_flush_fine()
 
 
 func cut_blade(east: float, north: float, fx: float, fz: float, width: float, edge_y: float, repose: float) -> float:
 	ensure_patch(Vector2(east, north))
+	if patch == null:
+		return 0.0
 	var moved: float = Soil.plane_blade(patch.field, east - patch.origin.x, north - patch.origin.y, fx, fz, width, edge_y, repose)
 	if moved > 0.0:
 		_flush_fine()
@@ -138,6 +287,7 @@ func cut_blade(east: float, north: float, fx: float, fz: float, width: float, ed
 func ensure_patch(focus: Vector2) -> void:
 	if patch == null:
 		return
+	focus += view_origin
 	if patch.recenter(focus):
 		fine_img.fill(Color(0, 0, 0))
 		fine_tex.update(fine_img)
@@ -168,6 +318,14 @@ func _bind_ground(span: float) -> void:
 	if spec["water"] != null:
 		water_y = float(spec["water"])
 	mat.set_shader_parameter("water_y", water_y)
+	var cover: Texture2D = null
+	if str(spec.get("id")) == "rene-levasseur":
+		cover = load("res://data/ile_cover.png")
+	if cover == null:
+		var blank := Image.create(2, 2, false, Image.FORMAT_RGBA8)
+		blank.fill(Color(0, 0, 0, 0))
+		cover = ImageTexture.create_from_image(blank)
+	mat.set_shader_parameter("cover_map", cover)
 	_sync_patch_uniforms()
 	fine_mat = mat.duplicate() as ShaderMaterial
 	fine_mat.set_shader_parameter("is_fine", 1.0)
@@ -238,12 +396,12 @@ func _rebuild_fine() -> void:
 					cover[rr * n + cc] = 1
 	for r in n:
 		for c in n:
-			var x := patch.origin.x + float(c) * cell
-			var z := patch.origin.y + float(r) * cell
+			var fx := patch.origin.x + float(c) * cell
+			var fz := patch.origin.y + float(r) * cell
 			var idx := r * n + c
 			var lift := 0.03 if cover[idx] != 0 else 0.0
-			positions[idx] = Vector3(x, heights[idx] + lift, z)
-			uvs[idx] = Vector2(clampf(x / span, 0.0, 1.0), clampf(z / span, 0.0, 1.0))
+			positions[idx] = Vector3(fx - view_origin.x, heights[idx] + lift, fz - view_origin.y)
+			uvs[idx] = Vector2(clampf(fx / span, 0.0, 1.0), clampf(fz / span, 0.0, 1.0))
 			var h: float = heights[idx]
 			var hl: float = heights[idx - 1] if c > 0 else h
 			var hr: float = heights[idx + 1] if c + 1 < n else h
@@ -359,6 +517,48 @@ func _clear() -> void:
 	window_origin = Vector2i(-99999, -99999)
 
 
+func save_edits() -> void:
+	if not persist or baseline.is_empty() or field == null:
+		return
+	if patch and patch.live:
+		patch.bake()
+	var indexes := PackedInt32Array()
+	var values := PackedFloat32Array()
+	for i in field.heights.size():
+		if absf(field.heights[i] - baseline[i]) > 0.004:
+			indexes.append(i)
+			values.append(field.heights[i])
+	DirAccess.make_dir_recursive_absolute("user://world")
+	var file := FileAccess.open("user://world/%s.edits" % site_id, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_32(0x31505752)
+	file.store_32(indexes.size())
+	for i in indexes.size():
+		file.store_32(indexes[i])
+		file.store_float(values[i])
+	print("saved edits ", site_id, " ", indexes.size())
+
+
+func _load_edits() -> void:
+	var path := "user://world/%s.edits" % site_id
+	if not FileAccess.file_exists(path):
+		return
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null or file.get_32() != 0x31505752:
+		return
+	var count := int(file.get_32())
+	var applied := 0
+	for _i in count:
+		var idx := int(file.get_32())
+		var height := file.get_float()
+		if idx >= 0 and idx < field.heights.size():
+			field.heights[idx] = height
+			field.disturb[idx] = 255
+			applied += 1
+	print("loaded edits ", site_id, " ", applied)
+
+
 func _decode_heights(name: String, bytes: PackedByteArray, hmin: float, hmax: float) -> PackedFloat32Array:
 	if not name.ends_with(".u16"):
 		return bytes.to_float32_array()
@@ -430,6 +630,7 @@ func _build_collision() -> void:
 func _update_collision(focus_pos: Vector3) -> void:
 	if shape == null:
 		return
+	focus_pos = Vector3(focus_pos.x + view_origin.x, focus_pos.y, focus_pos.z + view_origin.y)
 	var span := float(WINDOW - 1) * COL_SPACING
 	var ox := clampf(focus_pos.x - span * 0.5, 0.0, float(field.cols - 1) * field.spacing - span)
 	var oz := clampf(focus_pos.z - span * 0.5, 0.0, float(field.rows - 1) * field.spacing - span)
@@ -446,14 +647,14 @@ func _update_collision(focus_pos: Vector3) -> void:
 		var z := oz + float(j) * COL_SPACING
 		for i in WINDOW:
 			var x := ox + float(i) * COL_SPACING
-			data[j * WINDOW + i] = sample(x, z)
+			data[j * WINDOW + i] = _sample_field(x, z)
 	shape.map_width = WINDOW
 	shape.map_depth = WINDOW
 	shape.map_data = data
 	var col := ground.get_child(0) as CollisionShape3D
 	if col:
 		col.scale = Vector3(COL_SPACING, 1.0, COL_SPACING)
-	ground.position = Vector3(ox + span * 0.5, 0.0, oz + span * 0.5)
+	ground.position = Vector3(ox - view_origin.x + span * 0.5, 0.0, oz - view_origin.y + span * 0.5)
 
 
 func _build_water() -> void:
@@ -462,24 +663,65 @@ func _build_water() -> void:
 	var span := float(field.cols - 1) * field.spacing
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var y := float(spec["water"]) + 0.45
-	# Wide enough that the horizon is water from the island's high ground.
-	var reach := 90000.0
-	var pts := [
-		Vector3(-reach, y, -reach),
-		Vector3(span + reach, y, -reach),
-		Vector3(-reach, y, span + reach),
-		Vector3(span + reach, y, span + reach),
-	]
-	for p in pts:
-		st.set_uv(Vector2(p.x / span, p.z / span))
-		st.add_vertex(p)
-	st.add_index(0)
-	st.add_index(2)
-	st.add_index(1)
-	st.add_index(1)
-	st.add_index(2)
-	st.add_index(3)
+	var y := float(spec["water"]) + 0.28
+	if str(spec.get("id")) == "rene-levasseur":
+		# Long reservoir swells need more than four corners. 32 m over the tile.
+		var step := 32.0
+		var n := int(span / step)
+		var count := (n + 1) * (n + 1)
+		var positions := PackedVector3Array()
+		var uvs := PackedVector2Array()
+		positions.resize(count)
+		uvs.resize(count)
+		for j in n + 1:
+			for i in n + 1:
+				var idx := j * (n + 1) + i
+				var x := float(i) * step
+				var z := float(j) * step
+				positions[idx] = Vector3(x, y, z)
+				uvs[idx] = Vector2(x / span, z / span)
+		var indices := PackedInt32Array()
+		indices.resize(n * n * 6)
+		var t := 0
+		for j in n:
+			for i in n:
+				var a := j * (n + 1) + i
+				var b := a + 1
+				var c := a + (n + 1)
+				var d := c + 1
+				indices[t] = a
+				indices[t + 1] = c
+				indices[t + 2] = b
+				indices[t + 3] = b
+				indices[t + 4] = c
+				indices[t + 5] = d
+				t += 6
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = positions
+		arrays[Mesh.ARRAY_TEX_UV] = uvs
+		arrays[Mesh.ARRAY_INDEX] = indices
+		var grid := ArrayMesh.new()
+		grid.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		st.create_from(grid, 0)
+	else:
+		# Wide enough that the horizon is water from the high ground.
+		var reach := 90000.0
+		var pts := [
+			Vector3(-reach, y, -reach),
+			Vector3(span + reach, y, -reach),
+			Vector3(-reach, y, span + reach),
+			Vector3(span + reach, y, span + reach),
+		]
+		for p in pts:
+			st.set_uv(Vector2(p.x / span, p.z / span))
+			st.add_vertex(p)
+		st.add_index(0)
+		st.add_index(2)
+		st.add_index(1)
+		st.add_index(1)
+		st.add_index(2)
+		st.add_index(3)
 	st.generate_normals()
 	water = MeshInstance3D.new()
 	water.mesh = st.commit()
@@ -502,6 +744,9 @@ func _build_apron() -> void:
 	if spec.has("ring"):
 		return
 	var span := float(field.cols - 1) * field.spacing
+	# A coarse northern window is tens of kilometres across. An 8 m apron there never finishes.
+	if span > 12000.0:
+		return
 	var reach := 640.0
 	var step := 8.0
 	var water_y := -1000.0
@@ -565,6 +810,7 @@ func rebuild_around(pos: Vector3) -> void:
 
 
 func _stream(pos: Vector3) -> void:
+	pos = Vector3(pos.x + view_origin.x, pos.y, pos.z + view_origin.y)
 	var spacing := field.spacing
 	var cc := int(clampf(pos.x / spacing, 0.0, float(field.cols - 1)) / float(CHUNK))
 	var cr := int(clampf(pos.z / spacing, 0.0, float(field.rows - 1)) / float(CHUNK))
@@ -628,8 +874,8 @@ func _lod_for(center: Vector3) -> int:
 
 func _chunk_center(key: Vector2i) -> Vector3:
 	var spacing := field.spacing
-	var x := (float(key.x) + 0.5) * float(CHUNK) * spacing
-	var z := (float(key.y) + 0.5) * float(CHUNK) * spacing
+	var x := (float(key.x) + 0.5) * float(CHUNK) * spacing - view_origin.x
+	var z := (float(key.y) + 0.5) * float(CHUNK) * spacing - view_origin.y
 	return Vector3(x, 0.0, z)
 
 
@@ -659,8 +905,8 @@ func _build_chunk(key: Vector2i, stride: int) -> void:
 			return int(lookup[id])
 		var idx := positions.size()
 		lookup[id] = idx
-		var px := float(c) * spacing
-		var pz := float(r) * spacing
+		var px := float(c) * spacing - view_origin.x
+		var pz := float(r) * spacing - view_origin.y
 		positions.append(Vector3(px, _shore_height(c, r) + drop, pz))
 		uvs.append(Vector2(float(c) / cols_f, float(r) / rows_f))
 		var step_n := 6
@@ -815,7 +1061,8 @@ func _load_ring() -> void:
 	ring.cols = int(info["cols"])
 	ring.rows = int(info["rows"])
 	ring.spacing = float(info["spacing"])
-	ring.heights = FileAccess.get_file_as_bytes("res://data/%s" % str(info["heights"])).to_float32_array()
+	var ring_bytes := FileAccess.get_file_as_bytes("res://data/%s" % str(info["heights"]))
+	ring.heights = _decode_heights(str(info["heights"]), ring_bytes, float(info.get("hmin", 0.0)), float(info.get("hmax", 1.0)))
 	ring.disturb = PackedByteArray()
 	ring.changed = PackedInt32Array()
 	ring_mask = FileAccess.get_file_as_bytes("res://data/%s" % str(info["mask"]))
@@ -848,7 +1095,8 @@ func _build_ring(focus_pos: Vector3) -> void:
 	if ring == null:
 		return
 	focus = focus_pos
-	_build_ring_mesh(8, 0.0, 1.0e9, "far")
+	var far_stride := 16 if OS.has_feature("web") else 8
+	_build_ring_mesh(far_stride, 0.0, 1.0e9, "far")
 	_build_ring_near(focus_pos)
 
 

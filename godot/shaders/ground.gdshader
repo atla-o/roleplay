@@ -14,6 +14,7 @@ uniform sampler2D mud_alb : source_color, filter_linear_mipmap_anisotropic, repe
 uniform sampler2D mud_nrm : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D disturb_map : filter_linear, repeat_disable;
 uniform sampler2D fine_cut : filter_linear, repeat_disable;
+uniform sampler2D cover_map : filter_linear, repeat_disable;
 uniform vec2 height_range = vec2(0.0, 1.0);
 uniform vec2 tile_m = vec2(3998.0, 3998.0);
 uniform float forest = 0.0;
@@ -47,6 +48,23 @@ vec3 stochastic(sampler2D tex, vec2 uv) {
 	vec3 c01 = texture(tex, base + o01).rgb;
 	vec3 c11 = texture(tex, base + o11).rgb;
 	return mix(mix(c00, c10, sm.x), mix(c01, c11, sm.x), sm.y);
+}
+
+vec3 once(sampler2D tex, vec2 uv) {
+	vec2 cell = floor(uv);
+	vec2 o = vec2(hash12(cell), hash12(cell + vec2(9.0, 2.0)));
+	return texture(tex, uv * 0.41 + o).rgb;
+}
+
+float value_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = hash12(i);
+	float b = hash12(i + vec2(1.0, 0.0));
+	float c = hash12(i + vec2(0.0, 1.0));
+	float d = hash12(i + vec2(1.0, 1.0));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
 vec3 triplanar_color(sampler2D tex, vec3 p, vec3 n, float scale) {
@@ -92,28 +110,61 @@ void fragment() {
 	vec3 shore = stochastic(shore_alb, world_pos.xz * 0.1);
 
 	vec3 detail = mix(gravel, rock, smoothstep(0.22, 0.55, slope) * detail_fade);
-	// Cool the orange sand so the plain reads as gravel, not a dune.
-	detail = mix(detail, detail * vec3(0.78, 0.84, 0.88), 0.45);
-	vec3 alb = mix(detail, sat, mix(0.08, 0.22, detail_fade));
+	detail = mix(detail, detail * vec3(0.72, 0.78, 0.74), 0.35);
+	// Away from the island's land-cover path, the draped photograph still leads.
+	float photo_far = mix(0.55, 0.94, smoothstep(20.0, 80.0, dist));
+	vec3 alb = mix(detail, sat, photo_far);
 	alb = alb / (1.0 + max(alb - vec3(0.7), vec3(0.0)) * 1.2);
-	if (forest > 0.5) {
-		float canopy = clamp((sat.g - max(sat.r, sat.b)) * 4.0, 0.0, 1.0);
-		detail = mix(floor_t, rock, smoothstep(0.22, 0.55, slope));
-		float shore_w = 0.0;
+	vec4 cover = texture(cover_map, uv);
+	float cover_sum = cover.r + cover.g + cover.b + cover.a;
+	if (forest > 0.5 && cover_sum > 0.04) {
+		// NRCan classes, feathered: moss under needleleaf, lichen and granite on
+		// openings and steep shield, peat in wetlands, gravel on the reservoir shore.
+		vec3 moss = stochastic(forest_alb, world_pos.xz * 0.24);
+		vec3 lichen_c = stochastic(leaves_alb, world_pos.xz * 0.16);
+		vec3 granite = once(rock_alb, world_pos.xz * 0.11);
+		// Patches tens of metres across, so the detail tile cannot read as a grid.
+		float patch_m = value_noise(world_pos.xz * 0.035);
+		float patch_l = value_noise(world_pos.xz * 0.011);
+		vec3 stones_a = once(gravel_alb, world_pos.xz * 0.22);
+		vec3 stones_b = once(gravel_alb, world_pos.xz * 0.07 + vec2(3.0, 1.0));
+		vec3 stones = mix(stones_a, stones_b, patch_m);
+		vec3 peat = once(mud_alb, world_pos.xz * 0.13);
+		vec3 burn = once(shore_alb, world_pos.xz * 0.09);
+		float above = 99.0;
 		if (water_y > -100.0) {
-			shore_w = 1.0 - smoothstep(0.05, 3.2, world_pos.y - water_y);
+			above = world_pos.y - water_y;
 		}
-		detail = mix(detail, shore, shore_w * (1.0 - slope));
-		alb = mix(detail, sat, 0.12 + canopy * 0.16);
-		alb *= 1.15 + sat_l * 0.2;
-		vec3 moss = vec3(0.13, 0.24, 0.12);
-		float moss_w = canopy * (1.0 - smoothstep(0.08, 0.4, slope));
-		alb = mix(alb, moss, moss_w * 0.62);
+		float shore_h = (1.0 - smoothstep(0.3, 5.5, above)) * (1.0 - smoothstep(0.05, 0.45, slope));
+		float rock_w = clamp(cover.g + smoothstep(0.28, 0.58, slope), 0.0, 1.0);
+		float lichen_patch = smoothstep(0.58, 0.86, patch_l) * (1.0 - shore_h) * (1.0 - smoothstep(0.2, 0.5, slope));
+		rock_w = clamp(rock_w + lichen_patch * 0.85 + cover.g, 0.0, 1.0);
+		float bog = clamp(cover.b + smoothstep(0.72, 0.9, patch_m) * (1.0 - smoothstep(2.0, 8.0, above)) * (1.0 - slope) * 0.55, 0.0, 1.0);
+		detail = mix(moss, mix(lichen_c, granite, smoothstep(0.1, 0.48, slope)), rock_w);
+		detail = mix(detail, peat, bog);
+		detail = mix(detail, stones, max(cover.a, shore_h) * (1.0 - slope * 0.5));
+		float burn_w = smoothstep(0.18, 0.05, sat_l) * (1.0 - shore_h) * (1.0 - bog) * step(0.2, cover.r);
+		detail = mix(detail, burn, burn_w * 0.85);
+		detail *= 0.62 + patch_m * 0.28 + patch_l * 0.28;
+		// The orthophoto is the colour. Detail only roughens it up close.
+		float close = 1.0 - smoothstep(16.0, 70.0, dist);
+		float luma = max(dot(detail, vec3(0.25, 0.5, 0.25)), 0.04);
+		float grain = mix(1.0, 0.92 + luma * 0.16, close);
+		alb = sat * grain;
+		if (detail_fade > 0.15) {
+			vec3 ntex = once(forest_nrm, world_pos.xz * 0.24) * 2.0 - 1.0;
+			vec3 rtex = once(rock_nrm, world_pos.xz * 0.11) * 2.0 - 1.0;
+			ntex = mix(ntex, rtex, rock_w);
+			nrm = normalize(nrm + vec3(ntex.x, ntex.z * 0.15, ntex.y) * (0.65 + rock_w) * detail_fade);
+		}
+	} else if (forest > 0.5) {
+		detail = mix(stochastic(forest_alb, world_pos.xz * 0.2), rock, smoothstep(0.25, 0.55, slope));
+		alb = mix(detail, sat, 0.35);
 	}
 	float wet = 0.0;
 	if (water_y > -100.0) {
 		float above = world_pos.y - water_y;
-		wet = (1.0 - smoothstep(0.0, 0.28, above)) * (1.0 - smoothstep(0.1, 0.4, slope));
+		wet = (1.0 - smoothstep(0.0, 1.35, above)) * (1.0 - smoothstep(0.12, 0.45, slope));
 		vec3 wet_soil = alb * vec3(0.72, 0.66, 0.55);
 		alb = mix(alb, wet_soil, wet * 0.55);
 	}
@@ -126,23 +177,21 @@ void fragment() {
 		cut = max(cut, fine.r);
 		tracks = fine.g;
 	}
-	// Fresh spoil is lighter and rougher than the crust it came out of.
-	vec3 spoil = texture(mud_alb, world_pos.xz * 0.12).rgb;
-	spoil = mix(spoil, vec3(0.8, 0.68, 0.5), 0.78);
-	alb = mix(alb, spoil, smoothstep(0.25, 0.9, cut) * 0.72);
-	alb = mix(alb, alb * vec3(0.62, 0.58, 0.5), tracks * 0.7);
+	// Exposed ground is the local photo, darkened toward till and gravel, not a sand fill.
+	vec3 spoil = mix(sat, vec3(0.22, 0.2, 0.16), 0.45);
+	spoil = mix(spoil, texture(mud_alb, world_pos.xz * 0.08).rgb, 0.25);
+	alb = mix(alb, spoil, smoothstep(0.4, 0.95, cut) * 0.5);
+	alb = mix(alb, alb * vec3(0.55, 0.52, 0.46), tracks * 0.4);
 	ALBEDO = alb;
 	ROUGHNESS = mix(0.96, 0.78, wet);
 	SPECULAR = mix(0.02, 0.05, wet);
 	METALLIC = 0.0;
 
-	vec3 n = nrm;
 	float crumb = hash12(floor(world_pos.xz * 8.0)) - 0.5;
 	float crumb2 = hash12(floor(world_pos.xz * 8.0 + vec2(4.0, 1.0))) - 0.5;
-	n += vec3(crumb, 0.0, crumb2) * cut * 0.07;
-	// A groove across each track so the print catches the light.
+	nrm += vec3(crumb, 0.0, crumb2) * cut * 0.07;
 	float groove = sin(dot(world_pos.xz, normalize(vec2(nrm.z, -nrm.x) + vec2(0.001))) * 14.0);
-	n += vec3(groove, 0.0, 0.0) * tracks * 0.2;
-	n.y = max(n.y, 0.35);
-	NORMAL = normalize((VIEW_MATRIX * vec4(normalize(n), 0.0)).xyz);
+	nrm += vec3(groove, 0.0, 0.0) * tracks * 0.2;
+	nrm.y = max(nrm.y, 0.35);
+	NORMAL = normalize((VIEW_MATRIX * vec4(normalize(nrm), 0.0)).xyz);
 }

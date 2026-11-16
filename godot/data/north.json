@@ -1,0 +1,14 @@
+{
+  "posts": 640,
+  "half_m": 5283821.69614729,
+  "step_m": 16537.78308653299,
+  "lat_limit": 45.0,
+  "water": 0.0,
+  "hmin": -180.0,
+  "hmax": 5056.0,
+  "heights": "north.u16",
+  "color": "north_color.jpg",
+  "image_row0": "max_y",
+  "heights_row0": "min_y",
+  "projection": "polar stereographic, sphere 6378137 m, tangent at the north pole"
+}

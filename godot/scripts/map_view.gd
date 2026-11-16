@@ -133,6 +133,12 @@ func _scale() -> float:
 	return fit * zoom * 0.96
 
 
+func disk_rect() -> Rect2:
+	var origin := _origin()
+	var draw := float(posts) * _scale()
+	return Rect2(origin, Vector2(draw, draw))
+
+
 func _origin() -> Vector2:
 	var draw := float(posts) * _scale()
 	return size * 0.5 + pan - Vector2(draw, draw) * 0.5

@@ -29,6 +29,8 @@ var edit_timer := 0.0
 var north_map: NorthMap
 var pin_label: Label
 var search_box: LineEdit
+var home_button: Button
+var places: Array = []
 var recent_box: VBoxContainer
 var recent: Array = []
 var map_test := false
@@ -40,7 +42,7 @@ func _ready() -> void:
 	_read_args()
 	_world()
 	terrain = TerrainWorld.new()
-	terrain.persist = not dig_test and shot_dir == "" and not bench
+	terrain.persist = not dig_test and not map_test and not teleport_test and shot_dir == "" and not bench
 	add_child(terrain)
 	foliage = Foliage.new()
 	add_child(foliage)
@@ -82,6 +84,7 @@ func _process(dt: float) -> void:
 	if fps_time > 2.0:
 		fps_time = 0.0
 		print("fps ", Engine.get_frames_per_second())
+	_layout_map_chrome()
 	if manipulate_label and manipulate_label.visible:
 		manipulate_label.modulate.a = move_toward(manipulate_label.modulate.a, 0.0, dt * 0.45)
 		if manipulate_label.modulate.a <= 0.02:
@@ -383,73 +386,69 @@ func _ui() -> void:
 	style.content_margin_top = 16
 	style.content_margin_bottom = 16
 	panel.add_theme_stylebox_override("panel", style)
+	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	panel.offset_left = 28.0
+	panel.offset_top = 22.0
+	panel.offset_right = -28.0
+	panel.offset_bottom = -22.0
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
+	box.set_anchors_preset(Control.PRESET_FULL_RECT)
 	panel.add_child(box)
-	var title := Label.new()
-	title.text = "Settings"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(title)
-	var body_label := Label.new()
-	body_label.text = "Body"
-	box.add_child(body_label)
-	var bodies := HBoxContainer.new()
-	bodies.add_theme_constant_override("separation", 8)
-	box.add_child(bodies)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 8)
+	box.add_child(top)
+	var resume := _menu_button("Resume")
+	resume.custom_minimum_size = Vector2(110, 30)
+	resume.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	resume.pressed.connect(_close_menu)
+	top.add_child(resume)
+	var quit := _menu_button("Quit")
+	quit.custom_minimum_size = Vector2(90, 30)
+	quit.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	quit.pressed.connect(_quit_game)
+	top.add_child(quit)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(spacer)
 	for entry in [["Robot", "robot"], ["Human", "human"]]:
 		var b := _menu_button(entry[0])
+		b.custom_minimum_size = Vector2(72, 30)
+		b.size_flags_horizontal = Control.SIZE_SHRINK_END
 		b.pressed.connect(_activate.bind(entry[1]))
-		bodies.add_child(b)
-	var columns := HBoxContainer.new()
-	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	columns.add_theme_constant_override("separation", 12)
-	box.add_child(columns)
-	var side := VBoxContainer.new()
-	side.custom_minimum_size = Vector2(220, 0)
-	side.add_theme_constant_override("separation", 6)
-	columns.add_child(side)
-	var home := _menu_button("Home: island")
-	home.pressed.connect(func() -> void: _go_region(0))
-	side.add_child(home)
-	for i in range(1, sites.size()):
-		var spec: Dictionary = sites[i]
-		var region := _menu_button(str(spec["name"]))
-		var site_i := i
-		region.pressed.connect(func() -> void: _go_region(site_i))
-		side.add_child(region)
-	pin_label = Label.new()
-	pin_label.text = "Drop a pin on the map"
-	pin_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	side.add_child(pin_label)
-	search_box = LineEdit.new()
-	search_box.placeholder_text = "lat, lon"
-	search_box.focus_mode = Control.FOCUS_ALL
-	search_box.text_submitted.connect(_search_submitted)
-	side.add_child(search_box)
-	var teleport := _menu_button("Teleport")
-	teleport.pressed.connect(_teleport_pin)
-	side.add_child(teleport)
-	recent_box = VBoxContainer.new()
-	side.add_child(recent_box)
-	var resume := _menu_button("Resume")
-	resume.pressed.connect(_close_menu)
-	side.add_child(resume)
-	var quit := _menu_button("Quit")
-	quit.pressed.connect(_quit_game)
-	side.add_child(quit)
-	var map_col := VBoxContainer.new()
-	map_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	map_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	columns.add_child(map_col)
-	var tab := Label.new()
-	tab.text = "Map"
-	map_col.add_child(tab)
+		top.add_child(b)
+	var map_host := Control.new()
+	map_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	map_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	map_host.custom_minimum_size = Vector2(640, 420)
+	box.add_child(map_host)
 	north_map = NorthMap.new()
-	north_map.custom_minimum_size = Vector2(520, 520)
-	north_map.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	north_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	north_map.set_anchors_preset(Control.PRESET_FULL_RECT)
 	north_map.pinned.connect(_on_pin)
-	map_col.add_child(north_map)
+	map_host.add_child(north_map)
+	var overlay := Control.new()
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	map_host.add_child(overlay)
+	search_box = LineEdit.new()
+	search_box.custom_minimum_size = Vector2(250, 32)
+	search_box.placeholder_text = "lat, lon or a place"
+	search_box.focus_mode = Control.FOCUS_ALL
+	search_box.mouse_filter = Control.MOUSE_FILTER_STOP
+	search_box.text_submitted.connect(_search_submitted)
+	overlay.add_child(search_box)
+	home_button = _menu_button("Home: island")
+	home_button.custom_minimum_size = Vector2(132, 30)
+	home_button.pressed.connect(func() -> void: _go_region(0))
+	overlay.add_child(home_button)
+	pin_label = Label.new()
+	pin_label.text = "Click the map"
+	pin_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(pin_label)
+	recent_box = VBoxContainer.new()
+	recent_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(recent_box)
+	_load_places()
 	_load_recent()
 	_mark_map()
 	manipulate_label = Label.new()
@@ -463,6 +462,26 @@ func _ui() -> void:
 	manipulate_label.visible = false
 	ui.add_child(manipulate_label)
 	menu_root.add_child(panel)
+
+
+func _layout_map_chrome() -> void:
+	if north_map == null or search_box == null or panel == null or not panel.visible:
+		return
+	if north_map.size.x < 40.0:
+		return
+	var disk := north_map.disk_rect()
+	var local := north_map.position + disk.position
+	search_box.position = local + Vector2(14.0, 14.0)
+	search_box.size = Vector2(minf(268.0, disk.size.x * 0.42), 32.0)
+	if home_button:
+		home_button.position = local + Vector2(disk.size.x - 146.0, 14.0)
+		home_button.size = Vector2(132.0, 30.0)
+	if recent_box:
+		recent_box.position = search_box.position + Vector2(0.0, 38.0)
+		recent_box.size = Vector2(168.0, 160.0)
+	if pin_label:
+		pin_label.position = local + Vector2(14.0, disk.size.y - 32.0)
+		pin_label.size = Vector2(260.0, 22.0)
 
 
 func _menu_button(text: String) -> Button:
@@ -495,14 +514,88 @@ func _on_pin(lat: float, lon: float) -> void:
 		pin_label.text = "%.4f°, %.4f°" % [lat, lon]
 
 
-func _search_submitted(text: String) -> void:
-	var parts := text.replace(",", " ").split(" ", false)
-	if parts.size() < 2:
-		return
-	if not parts[0].is_valid_float() or not parts[1].is_valid_float():
-		return
+func _load_places() -> void:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/places.json"))
+	if parsed is Array:
+		places = parsed
+
+
+func _coord_token(token: String) -> float:
+	var t := token.strip_edges().to_upper()
+	var hemi := 0.0
+	if t.ends_with("N") or t.ends_with("E") or t.begins_with("N") or t.begins_with("E"):
+		hemi = 1.0
+	elif t.ends_with("S") or t.ends_with("W") or t.begins_with("S") or t.begins_with("W"):
+		hemi = -1.0
+	t = t.replace("N", "").replace("S", "").replace("E", "").replace("W", "")
+	if not t.is_valid_float():
+		return 9999.0
+	var value := float(t)
+	if hemi < 0.0 and value > 0.0:
+		value = -value
+	return value
+
+
+func _parse_latlon(text: String) -> Vector2:
+	var parts := text.replace(",", " ").replace(";", " ").split(" ", false)
+	if parts.size() != 2:
+		return Vector2(999.0, 999.0)
+	var lat := _coord_token(parts[0])
+	var lon := _coord_token(parts[1])
+	if absf(lat) > 90.0 or absf(lon) > 180.0 or lat >= 900.0 or lon >= 900.0:
+		return Vector2(999.0, 999.0)
+	return Vector2(lat, lon)
+
+
+func _find_place(text: String) -> Dictionary:
+	var query := text.strip_edges().to_lower()
+	if query == "":
+		return {}
+	var best: Dictionary = {}
+	var best_rank := 99
+	var best_len := 9999
+	for item in places:
+		var spec: Dictionary = item
+		var fields: PackedStringArray = PackedStringArray()
+		fields.append(str(spec.get("n", "")))
+		fields.append(str(spec.get("a", "")))
+		for piece in str(spec.get("alt", "")).split(";", false):
+			fields.append(piece)
+		for field in fields:
+			var name := field.strip_edges().to_lower()
+			if name == "":
+				continue
+			var rank := 99
+			if name == query:
+				rank = 0
+			elif name.begins_with(query):
+				rank = 1
+			elif name.contains(query):
+				rank = 2
+			if rank < best_rank or (rank == best_rank and name.length() < best_len):
+				best_rank = rank
+				best_len = name.length()
+				best = spec
+	return best
+
+
+func _go_pin(lat: float, lon: float) -> void:
 	if north_map:
-		north_map.drop_latlon(float(parts[0]), float(parts[1]))
+		north_map.drop_latlon(lat, lon)
+	_teleport_pin()
+
+
+func _search_submitted(text: String) -> void:
+	var coord := _parse_latlon(text)
+	if coord.x < 900.0:
+		_go_pin(coord.x, coord.y)
+		return
+	var hit := _find_place(text)
+	if hit.is_empty():
+		if pin_label:
+			pin_label.text = "No northern place"
+		return
+	_go_pin(float(hit["lat"]), float(hit["lon"]))
 
 
 func _teleport_pin() -> void:
@@ -581,8 +674,8 @@ func _show_recent() -> void:
 		var lat := float(pin["lat"])
 		var lon := float(pin["lon"])
 		var b := _menu_button("%.2f, %.2f" % [lat, lon])
-		b.custom_minimum_size = Vector2(0, 28)
-		b.pressed.connect(north_map.drop_latlon.bind(lat, lon))
+		b.custom_minimum_size = Vector2(0, 26)
+		b.pressed.connect(_go_pin.bind(lat, lon))
 		recent_box.add_child(b)
 
 
@@ -615,23 +708,27 @@ func _mark_map() -> void:
 				lat = lerpf(float(b["north"]), float(b["south"]), u4)
 			poly.append(Vector2(lat, lon))
 		north_map.set_highlight(poly)
-	var marks: Array = []
-	for i in range(1, sites.size()):
-		var spec: Dictionary = sites[i]
-		marks.append({"lat": float(spec["lat"]), "lon": float(spec["lon"]), "name": spec["name"]})
-	north_map.set_marks(marks)
+	north_map.set_marks([])
 
 
 func _frame_spawn_shot() -> void:
 	var fwd := vehicle.forward()
 	camera.hold = true
-	camera.camera.global_position = vehicle.global_position - fwd * 16.0 + Vector3.UP * 8.0
-	camera.camera.look_at(vehicle.global_position + fwd * 8.0 + Vector3.UP * 1.2, Vector3.UP)
+	var pitch := camera.pitch_up
+	var focus := vehicle.global_position + fwd * camera.look_ahead + Vector3.UP * camera.look_height
+	camera.camera.global_position = focus - fwd * camera.distance * cos(pitch) + Vector3.UP * camera.distance * sin(pitch)
+	camera.camera.look_at(focus, Vector3.UP)
 
 
 func _run_map_test() -> void:
 	var back := Geo.polar_inverse(Geo.polar_forward(78.05, 13.64))
 	print("roundtrip ", back)
+	var svalbard := _find_place("svalbard")
+	var yamal := _find_place("yamal")
+	var quebec := _find_place("northern quebec")
+	var island := _find_place("rene")
+	var places_ok := absf(float(svalbard.get("lat", 0.0)) - 78.05) < 0.2 and absf(float(yamal.get("lat", 0.0)) - 70.49) < 0.2 and absf(float(quebec.get("lat", 0.0)) - 58.1) < 0.2 and absf(float(island.get("lon", 0.0)) + 69.08) < 0.2
+	print("places ", "ok" if places_ok else "FAIL", " ", svalbard.get("n"), " ", yamal.get("n"), " ", quebec.get("n"), " ", island.get("n"))
 	north_map.drop_latlon(51.45, -69.09)
 	_teleport_pin()
 	var island_id := str(terrain.spec.get("id"))
@@ -647,7 +744,7 @@ func _run_map_test() -> void:
 	var far_id := str(terrain.spec.get("id"))
 	var far_h := terrain.sample(active.global_position.x, active.global_position.z)
 	print("lowres-pin ", far_id, " ", active.global_position, " h ", far_h)
-	var ok := island_id == "rene-levasseur" and europe_id == "northern-2" and far_id.begins_with("north-") and island_h > 300.0 and far_h > 1.5 and absf(active.global_position.x) < 5000.0
+	var ok := places_ok and island_id == "rene-levasseur" and europe_id == "northern-2" and far_id.begins_with("north-") and island_h > 300.0 and far_h > 1.5 and absf(active.global_position.x) < 5000.0
 	print("map-test ", "ok" if ok else "FAIL")
 	get_tree().quit(0 if ok else 1)
 
@@ -754,8 +851,7 @@ func _shots() -> void:
 	for _i in 4:
 		await get_tree().process_frame
 	_activate("robot")
-	vehicle.blade_angle = -0.5
-	vehicle._pose_blade()
+	vehicle.set_manipulate(false)
 	if _take("dozer-close"):
 		vehicle.blade_angle = -0.12
 		vehicle._pose_blade()
@@ -817,6 +913,7 @@ func _shots() -> void:
 		vehicle.freeze = false
 		vehicle.set_physics_process(true)
 		shot_drive = true
+		vehicle.set_manipulate(true)
 		vehicle.blade_angle = -0.55
 		var walked := 0.0
 		while walked < 4.0:

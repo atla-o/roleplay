@@ -6,9 +6,9 @@ The playable build is the Godot 4.7 project in `godot/`. Desktop play uses the F
 
 Controls are the same on Linux and in the browser.
 
-- **Robot.** W throttle, S brake into reverse, A and D steer. Q raises the blade, E lowers it. Hold the left mouse button to lower the blade and the right button to raise it. The mouse, or the right stick, orbits the chase camera. It recenters after about a second and a half.
+- **Robot.** W throttle, S brake into reverse, A and D steer. The blade stays up, and driving does not dig. F toggles terrain manipulation; Q and E then raise and lower the blade. The mouse, or the right stick, orbits the chase camera. The wheel zooms it. It recenters after about a second and a half.
 - **Human.** A 1.8 m person, camera behind them. WASD walks, Shift runs, Space jumps. Walk, run and idle come from the character's animation clips.
-- **Settings.** The screen stays clear. Esc opens a menu and Esc closes it. The menu switches Robot and Human, and has Resume and Quit. The Map tab is a polar view of everything from 45°N to the pole. Drag to pan, the wheel zooms, and a click drops a pin. Teleport or Enter puts you on the ground there. Water snaps to the nearest shore. The island is outlined; Home: island returns to it. The older places stay as bookmarks. You start in the dozer on the island with the blade down, so W cuts ground. The reservoir is the shoreline. Digs are saved in a private local file for that place.
+- **Settings.** The screen stays clear. Esc opens a menu and Esc closes it. Resume and Quit sit above a polar map of everything from 45°N to the pole. Robot and Human stay as small switches on that bar. Drag to pan, the wheel zooms, and a click drops a pin. The search box on the map takes a latitude and longitude or a northern place name, then lands you there. Water snaps to the nearest shore. The island is outlined; Home: island returns to it. You start in the dozer on the island. The reservoir is the shoreline. Digs are saved in a private local file for that place.
 - **Water.** Shallows slow you. Deeper water stops you. The outer ground falls toward the water so the tile is not a square wall.
 - **Gamepad.** Left stick drives, triggers throttle and reverse, bumpers move the blade, right stick looks, bottom face button jumps.
 

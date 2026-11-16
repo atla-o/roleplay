@@ -151,16 +151,17 @@ func _hold_shore() -> void:
 
 
 func _pose_blade() -> void:
+	# Negative blade_angle is down. Pitch the pivot so the cutting edge drops.
+	if blade_node:
+		blade_node.rotation.x = -blade_angle
+	if tilt_node:
+		tilt_node.rotation.z = blade_tilt
 	if blade_anim == null or not blade_anim.has_animation("blade-close"):
 		return
-	# The end of blade-close is the model's rest key, which stands the side
-	# wings up as slabs. Stay on the pitched moldboard key.
 	if blade_anim.current_animation != "blade-close":
 		blade_anim.play("blade-close")
 	blade_anim.seek(0.0, true)
 	blade_anim.pause()
-	if tilt_node:
-		tilt_node.rotation.z = blade_tilt
 
 
 func _scroll_tracks(speed: float, dt: float) -> void:
@@ -170,26 +171,15 @@ func _scroll_tracks(speed: float, dt: float) -> void:
 
 
 func _load_model() -> void:
-	model = (load("res://assets/models/bulldozer.glb") as PackedScene).instantiate()
+	model = (load("res://assets/models/dozer.glb") as PackedScene).instantiate()
 	add_child(model)
-	blade_anim = _find_player(model)
+	blade_node = model.find_child("blade", true, false) as Node3D
 	tilt_node = model.find_child("blade-angle", true, false) as Node3D
-	blade_node = tilt_node.get_parent() as Node3D if tilt_node else null
-	# The charcoal frame shares the pitch pivot and slides out as a grey plate
-	# once the blade is in the cut. The yellow moldboard is the blade.
-	if blade_node and tilt_node:
-		var drop: Array = []
-		for child in blade_node.get_children():
-			if child != tilt_node:
-				drop.append(child)
-		for child in drop:
-			blade_node.remove_child(child)
-			child.free()
-		_paint_blade(tilt_node)
+	_finish_materials(model)
 	_collect_tracks(model)
-	_glass(model)
 	_seat_on_ground(model)
-	print("tracks ", track_mats.size(), " tilt ", tilt_node != null)
+	_pose_blade()
+	print("tracks ", track_mats.size(), " blade ", blade_node != null, " tilt ", tilt_node != null)
 
 
 func _build_dozer() -> void:
@@ -359,6 +349,54 @@ func _collect_tracks(node: Node) -> void:
 				track_mats.append(mat)
 	for child in node.get_children():
 		_collect_tracks(child)
+
+
+func _finish_materials(node: Node) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		var key := str(mi.name).to_lower()
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.66, 0.68, 0.64)
+		mat.metallic = 0.12
+		mat.roughness = 0.48
+		if "mold" in key:
+			mat.albedo_color = Color(0.78, 0.76, 0.68)
+			mat.metallic = 0.22
+			mat.roughness = 0.46
+			mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		elif "edge" in key or "cutting" in key:
+			mat.albedo_color = Color(0.86, 0.68, 0.38)
+			mat.metallic = 0.12
+			mat.roughness = 0.7
+			mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		elif "shoe" in key or "rubber" in key:
+			mat.albedo_color = Color(0.08, 0.08, 0.085)
+			mat.metallic = 0.02
+			mat.roughness = 0.9
+		elif "wheel" in key or "steel" in key:
+			mat.albedo_color = Color(0.55, 0.56, 0.54)
+			mat.metallic = 0.32
+			mat.roughness = 0.38
+		elif "dark" in key or "frame" in key:
+			mat.albedo_color = Color(0.18, 0.19, 0.2)
+			mat.metallic = 0.16
+			mat.roughness = 0.55
+		elif "glass" in key or "cab" in key:
+			mat.albedo_color = Color(0.34, 0.5, 0.54)
+			mat.metallic = 0.06
+			mat.roughness = 0.08
+		elif "sensor" in key:
+			mat.albedo_color = Color(0.14, 0.15, 0.16)
+			mat.metallic = 0.24
+			mat.roughness = 0.3
+		elif "lamp" in key:
+			mat.albedo_color = Color(0.95, 0.55, 0.12)
+			mat.emission_enabled = true
+			mat.emission = Color(0.9, 0.35, 0.05)
+			mat.emission_energy_multiplier = 1.4
+		mi.material_override = mat
+	for child in node.get_children():
+		_finish_materials(child)
 
 
 func _paint_blade(node: Node) -> void:

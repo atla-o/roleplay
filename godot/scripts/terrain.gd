@@ -34,6 +34,9 @@ var fine_mesh: MeshInstance3D
 var punched: Array = []
 var fine_img: Image
 var fine_tex: ImageTexture
+var baseline: PackedFloat32Array
+var persist := true
+var site_id := ""
 const WINDOW := 97
 const COL_SPACING := 0.5
 
@@ -53,6 +56,10 @@ func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
 	field.disturb = PackedByteArray()
 	field.disturb.resize(cols * rows)
 	field.changed = PackedInt32Array()
+	site_id = str(spec.get("id", "site"))
+	baseline = field.heights.duplicate()
+	if persist:
+		_load_edits()
 	_build_height_texture()
 	_build_disturb_texture()
 	mat = ShaderMaterial.new()
@@ -357,6 +364,48 @@ func _clear() -> void:
 		ground.queue_free()
 		ground = null
 	window_origin = Vector2i(-99999, -99999)
+
+
+func save_edits() -> void:
+	if not persist or baseline.is_empty() or field == null:
+		return
+	if patch and patch.live:
+		patch.bake()
+	var indexes := PackedInt32Array()
+	var values := PackedFloat32Array()
+	for i in field.heights.size():
+		if absf(field.heights[i] - baseline[i]) > 0.004:
+			indexes.append(i)
+			values.append(field.heights[i])
+	DirAccess.make_dir_recursive_absolute("user://world")
+	var file := FileAccess.open("user://world/%s.edits" % site_id, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_32(0x31505752)
+	file.store_32(indexes.size())
+	for i in indexes.size():
+		file.store_32(indexes[i])
+		file.store_float(values[i])
+	print("saved edits ", site_id, " ", indexes.size())
+
+
+func _load_edits() -> void:
+	var path := "user://world/%s.edits" % site_id
+	if not FileAccess.file_exists(path):
+		return
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null or file.get_32() != 0x31505752:
+		return
+	var count := int(file.get_32())
+	var applied := 0
+	for _i in count:
+		var idx := int(file.get_32())
+		var height := file.get_float()
+		if idx >= 0 and idx < field.heights.size():
+			field.heights[idx] = height
+			field.disturb[idx] = 255
+			applied += 1
+	print("loaded edits ", site_id, " ", applied)
 
 
 func _decode_heights(name: String, bytes: PackedByteArray, hmin: float, hmax: float) -> PackedFloat32Array:
@@ -815,7 +864,8 @@ func _load_ring() -> void:
 	ring.cols = int(info["cols"])
 	ring.rows = int(info["rows"])
 	ring.spacing = float(info["spacing"])
-	ring.heights = FileAccess.get_file_as_bytes("res://data/%s" % str(info["heights"])).to_float32_array()
+	var ring_bytes := FileAccess.get_file_as_bytes("res://data/%s" % str(info["heights"]))
+	ring.heights = _decode_heights(str(info["heights"]), ring_bytes, float(info.get("hmin", 0.0)), float(info.get("hmax", 1.0)))
 	ring.disturb = PackedByteArray()
 	ring.changed = PackedInt32Array()
 	ring_mask = FileAccess.get_file_as_bytes("res://data/%s" % str(info["mask"]))
@@ -848,7 +898,8 @@ func _build_ring(focus_pos: Vector3) -> void:
 	if ring == null:
 		return
 	focus = focus_pos
-	_build_ring_mesh(8, 0.0, 1.0e9, "far")
+	var far_stride := 16 if OS.has_feature("web") else 8
+	_build_ring_mesh(far_stride, 0.0, 1.0e9, "far")
 	_build_ring_near(focus_pos)
 
 

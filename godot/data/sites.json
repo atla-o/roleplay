@@ -1,8 +1,37 @@
 {
   "sites": [
     {
-      "id": "northern-1",
-      "name": "Northern 1 — Canada",
+      "id": "rene-levasseur",
+      "name": "Île René-Levasseur",
+      "heights": "ile.u16",
+      "color": "ile_color.jpg",
+      "cols": 2000,
+      "rows": 2000,
+      "spacing": 2.0,
+      "hmin": 348.2874755859375,
+      "hmax": 616.302490234375,
+      "repose": 32.0,
+      "spawn": [2268.0, 3060.0],
+      "yaw": 0.0,
+      "ring": {
+        "heights": "ile_ring.u16",
+        "mask": "ile_ring_mask.u8",
+        "cols": 1906,
+        "rows": 2094,
+        "spacing": 40.0,
+        "origin": [-9360.0, -46160.0],
+        "hmin": 347.02154541015625,
+        "hmax": 1022.0880126953125
+      },
+      "water": 348.59,
+      "outer_m": 0.0,
+      "forest": true,
+      "lat": 51.4332,
+      "lon": -69.0892
+    },
+    {
+      "id": "polar-desert-basin",
+      "name": "Polar Desert Basin",
       "heights": "basin.u16",
       "color": "basin_color.jpg",
       "cols": 2000,

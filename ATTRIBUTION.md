@@ -46,7 +46,9 @@ The playable build in `godot/` is [Godot Engine](https://godotengine.org/) 4.7 (
 
 ## Godot ground
 
-The playable world is three 2 m tiles. The outer few hundred metres of each square are lowered toward the water along a wandering line so the horizon is a shore. That fringe is not a second survey. The interior posts are the measured DEM.
+The playable world starts on Île René-Levasseur. The 2 m tile is the NRCan HRDEM mosaic, and a 40 m ring continues that ground out to the reservoir. Cells the ring marks as water sit under the water surface, so the shoreline is the reservoir rather than the edge of the square. Digs on a site are written to a private local file and loaded again on the next visit.
+
+The other three 2 m tiles stay reachable from Settings. The outer few hundred metres of those squares are lowered toward the water along a wandering line so the horizon is a shore. That fringe is not a second survey. The interior posts are the measured DEM.
 
 Northern 1 — Canada is ArcticDEM v4.1 at native 2 m, southwest corner EPSG:3413 X −1,116,740 m, Y −1,136,008 m, 2000 by 2000 posts. The machine starts on a flat bench inland of the water, near 1936 m east and 1568 m north of that corner.
 

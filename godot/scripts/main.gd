@@ -25,12 +25,14 @@ var world: Environment
 var bench := false
 var bench_elapsed := 0.0
 var bench_times := PackedFloat32Array()
+var edit_timer := 0.0
 
 func _ready() -> void:
 	DisplayServer.window_set_title("Roleplay")
 	_read_args()
 	_world()
 	terrain = TerrainWorld.new()
+	terrain.persist = not dig_test and shot_dir == "" and not bench
 	add_child(terrain)
 	foliage = Foliage.new()
 	add_child(foliage)
@@ -68,6 +70,11 @@ func _process(dt: float) -> void:
 		print("fps ", Engine.get_frames_per_second())
 	if active:
 		terrain.focus = active.global_position
+	if terrain and terrain.persist:
+		edit_timer += dt
+		if edit_timer > 8.0:
+			edit_timer = 0.0
+			terrain.save_edits()
 	if panel and panel.visible:
 		vehicle.throttle = 0.0
 		vehicle.steer = 0.0
@@ -222,7 +229,14 @@ func _load_sites() -> void:
 	_open_site(0)
 
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and terrain:
+		terrain.save_edits()
+
+
 func _open_site(index: int) -> void:
+	if terrain and terrain.field != null:
+		terrain.save_edits()
 	site_index = index
 	var spec: Dictionary = sites[index]
 	var albedo: Texture2D = load("res://data/%s" % str(spec["color"]))
@@ -308,9 +322,9 @@ func _ui() -> void:
 	panel = PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER)
 	panel.offset_left = -200.0
-	panel.offset_top = -248.0
+	panel.offset_top = -292.0
 	panel.offset_right = 200.0
-	panel.offset_bottom = 248.0
+	panel.offset_bottom = 292.0
 	panel.visible = false
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var style := StyleBoxFlat.new()
@@ -467,6 +481,17 @@ func _shots() -> void:
 		await get_tree().process_frame
 	_activate("robot")
 	vehicle.blade_angle = -0.5
+	vehicle._pose_blade()
+	if _take("dozer-close"):
+		vehicle.blade_angle = -0.12
+		vehicle._pose_blade()
+		var fwd0 := vehicle.forward()
+		var side0 := Vector3(fwd0.z, 0.0, -fwd0.x)
+		camera.hold = true
+		camera.camera.global_position = vehicle.global_position + fwd0 * 5.2 + side0 * 4.6 + Vector3.UP * 2.8
+		camera.camera.look_at(vehicle.global_position + fwd0 * 1.5 + Vector3.UP * 0.85, Vector3.UP)
+		await get_tree().process_frame
+		await _shot("dozer-close")
 	if _take("n1") or _take("hidden"):
 		camera.hold = false
 		camera.snap()

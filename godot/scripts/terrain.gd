@@ -41,18 +41,23 @@ const WINDOW := 97
 const COL_SPACING := 0.5
 
 func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
+	var bytes := FileAccess.get_file_as_bytes("res://data/%s" % next_spec["heights"])
+	var heights := _decode_heights(str(next_spec["heights"]), bytes, float(next_spec["hmin"]), float(next_spec["hmax"]))
+	setup_heights(next_spec, heights, albedo, grain)
+
+
+func setup_heights(next_spec: Dictionary, heights: PackedFloat32Array, albedo: Texture2D, grain: Texture2D) -> void:
 	spec = next_spec
 	color_tex = albedo
 	grain_tex = grain
 	_clear()
 	var cols: int = spec["cols"]
 	var rows: int = spec["rows"]
-	var bytes := FileAccess.get_file_as_bytes("res://data/%s" % spec["heights"])
 	field = Soil.Field.new()
 	field.cols = cols
 	field.rows = rows
 	field.spacing = float(spec["spacing"])
-	field.heights = _decode_heights(str(spec["heights"]), bytes, float(spec["hmin"]), float(spec["hmax"]))
+	field.heights = heights
 	field.disturb = PackedByteArray()
 	field.disturb.resize(cols * rows)
 	field.changed = PackedInt32Array()
@@ -60,6 +65,88 @@ func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
 	baseline = field.heights.duplicate()
 	if persist:
 		_load_edits()
+
+
+## A window of the coarse polar grid, centred on land. Returns the local
+## spawn and the lat/lon actually used after a shore snap.
+func open_north(meta: Dictionary, lat: float, lon: float, grain: Texture2D) -> Dictionary:
+	var posts := int(meta["posts"])
+	var half_m := float(meta["half_m"])
+	var step := float(meta["step_m"])
+	var bytes := FileAccess.get_file_as_bytes("res://data/%s" % str(meta["heights"]))
+	var full := _decode_heights(str(meta["heights"]), bytes, float(meta["hmin"]), float(meta["hmax"]))
+	var projected := Geo.polar_forward(lat, lon)
+	var col := int(round((projected.x + half_m) / step))
+	var image_row := int(round((half_m - projected.y) / step))
+	var row := posts - 1 - image_row
+	col = clampi(col, 0, posts - 1)
+	row = clampi(row, 0, posts - 1)
+	if full[row * posts + col] < 1.5:
+		var found := _nearest_land(full, posts, col, row)
+		col = found.x
+		row = found.y
+	var radius := 40
+	var c0 := clampi(col - radius, 0, posts - 2)
+	var r0 := clampi(row - radius, 0, posts - 2)
+	var c1 := clampi(col + radius, c0 + 1, posts - 1)
+	var r1 := clampi(row + radius, r0 + 1, posts - 1)
+	var cols := c1 - c0 + 1
+	var rows := r1 - r0 + 1
+	var window := PackedFloat32Array()
+	window.resize(cols * rows)
+	var lo := 1.0e9
+	var hi := -1.0e9
+	for r in rows:
+		for c in cols:
+			var h: float = full[(r0 + r) * posts + (c0 + c)]
+			window[r * cols + c] = h
+			lo = minf(lo, h)
+			hi = maxf(hi, h)
+	var color_tex := load("res://data/%s" % str(meta["color"])) as Texture2D
+	var color_img: Image = color_tex.get_image() if color_tex != null else null
+	var paint := Image.create(cols, rows, false, Image.FORMAT_RGB8)
+	if color_img != null:
+		for r in rows:
+			# File row 0 is minimum Y. The photo's row 0 is maximum Y.
+			var src_row := posts - 1 - (r0 + (rows - 1 - r))
+			for c in cols:
+				paint.set_pixel(c, r, color_img.get_pixel(c0 + c, src_row))
+	var albedo := ImageTexture.create_from_image(paint)
+	var spec_n := {
+		"id": "north-%d-%d" % [c0, r0],
+		"name": "North",
+		"cols": cols,
+		"rows": rows,
+		"spacing": step,
+		"hmin": lo,
+		"hmax": maxf(hi, lo + 1.0),
+		"repose": 34.0,
+		"water": 0.0,
+		"forest": false,
+		"spawn": [0.0, 0.0],
+	}
+	setup_heights(spec_n, window, albedo, grain)
+	var local := Vector2(float(col - c0) * step, float(row - r0) * step)
+	var back_x := -half_m + float(col) * step
+	var back_y := -half_m + float(row) * step
+	var ll := Geo.polar_inverse(Vector2(back_x, back_y))
+	return {"x": local.x, "z": local.y, "lat": ll.x, "lon": ll.y}
+
+
+func _nearest_land(full: PackedFloat32Array, posts: int, col: int, row: int) -> Vector2i:
+	var best := Vector2i(col, row)
+	var best_d := 1.0e12
+	for r in posts:
+		var dz := r - row
+		for c in posts:
+			if full[r * posts + c] < 1.5:
+				continue
+			var dx := c - col
+			var d := dx * dx + dz * dz
+			if d < best_d:
+				best_d = d
+				best = Vector2i(c, r)
+	return best
 	_build_height_texture()
 	_build_disturb_texture()
 	mat = ShaderMaterial.new()

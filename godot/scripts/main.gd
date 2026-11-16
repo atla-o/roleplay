@@ -26,6 +26,12 @@ var bench := false
 var bench_elapsed := 0.0
 var bench_times := PackedFloat32Array()
 var edit_timer := 0.0
+var north_map: NorthMap
+var pin_label: Label
+var search_box: LineEdit
+var recent_box: VBoxContainer
+var recent: Array = []
+var map_test := false
 
 func _ready() -> void:
 	DisplayServer.window_set_title("Roleplay")
@@ -50,6 +56,9 @@ func _ready() -> void:
 	_activate("robot")
 	vehicle.blade_angle = -0.5
 	DisplayServer.window_set_title("Roleplay")
+	if map_test:
+		_run_map_test()
+		return
 	if shot_dir != "":
 		_shots()
 	elif dig_test:
@@ -152,6 +161,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		_toggle_menu()
 		get_viewport().set_input_as_handled()
 		return
+	if event is InputEventKey and event.pressed and not event.echo and panel and panel.visible:
+		var key := event as InputEventKey
+		if key.keycode == KEY_ENTER or key.keycode == KEY_KP_ENTER:
+			_teleport_pin()
+			get_viewport().set_input_as_handled()
+			return
 	if panel and panel.visible:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -234,7 +249,7 @@ func _notification(what: int) -> void:
 		terrain.save_edits()
 
 
-func _open_site(index: int) -> void:
+func _open_site(index: int, at: Vector2 = Vector2(-1.0e9, -1.0e9)) -> void:
 	if terrain and terrain.field != null:
 		terrain.save_edits()
 	site_index = index
@@ -246,6 +261,10 @@ func _open_site(index: int) -> void:
 	var yaw_v := float(spec.get("yaw", 0.0))
 	var sx := float(spec["spawn"][0])
 	var sz := float(spec["spawn"][1])
+	if at.x > -1.0e8:
+		var landed := _snap_land(at.x, at.y)
+		sx = landed.x
+		sz = landed.y
 	_place(vehicle, sx, sz, yaw_v)
 	vehicle.blade_angle = -0.5
 	vehicle.linear_velocity = Vector3.ZERO
@@ -321,10 +340,10 @@ func _ui() -> void:
 	menu_root.add_child(dim)
 	panel = PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.offset_left = -200.0
-	panel.offset_top = -292.0
-	panel.offset_right = 200.0
-	panel.offset_bottom = 292.0
+	panel.offset_left = -500.0
+	panel.offset_top = -330.0
+	panel.offset_right = 500.0
+	panel.offset_bottom = 330.0
 	panel.visible = false
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var style := StyleBoxFlat.new()
@@ -355,21 +374,58 @@ func _ui() -> void:
 		var b := _menu_button(entry[0])
 		b.pressed.connect(_activate.bind(entry[1]))
 		bodies.add_child(b)
-	var place_label := Label.new()
-	place_label.text = "Region"
-	box.add_child(place_label)
-	for i in sites.size():
+	var columns := HBoxContainer.new()
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	columns.add_theme_constant_override("separation", 12)
+	box.add_child(columns)
+	var side := VBoxContainer.new()
+	side.custom_minimum_size = Vector2(220, 0)
+	side.add_theme_constant_override("separation", 6)
+	columns.add_child(side)
+	var home := _menu_button("Home: island")
+	home.pressed.connect(func() -> void: _go_region(0))
+	side.add_child(home)
+	for i in range(1, sites.size()):
 		var spec: Dictionary = sites[i]
 		var region := _menu_button(str(spec["name"]))
 		var site_i := i
 		region.pressed.connect(func() -> void: _go_region(site_i))
-		box.add_child(region)
+		side.add_child(region)
+	pin_label = Label.new()
+	pin_label.text = "Drop a pin on the map"
+	pin_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	side.add_child(pin_label)
+	search_box = LineEdit.new()
+	search_box.placeholder_text = "lat, lon"
+	search_box.focus_mode = Control.FOCUS_ALL
+	search_box.text_submitted.connect(_search_submitted)
+	side.add_child(search_box)
+	var teleport := _menu_button("Teleport")
+	teleport.pressed.connect(_teleport_pin)
+	side.add_child(teleport)
+	recent_box = VBoxContainer.new()
+	side.add_child(recent_box)
 	var resume := _menu_button("Resume")
 	resume.pressed.connect(_close_menu)
-	box.add_child(resume)
+	side.add_child(resume)
 	var quit := _menu_button("Quit")
 	quit.pressed.connect(_quit_game)
-	box.add_child(quit)
+	side.add_child(quit)
+	var map_col := VBoxContainer.new()
+	map_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	map_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	columns.add_child(map_col)
+	var tab := Label.new()
+	tab.text = "Map"
+	map_col.add_child(tab)
+	north_map = NorthMap.new()
+	north_map.custom_minimum_size = Vector2(520, 520)
+	north_map.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	north_map.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	north_map.pinned.connect(_on_pin)
+	map_col.add_child(north_map)
+	_load_recent()
+	_mark_map()
 	menu_root.add_child(panel)
 
 
@@ -380,6 +436,181 @@ func _menu_button(text: String) -> Button:
 	b.custom_minimum_size = Vector2(0, 36)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return b
+
+
+func _snap_land(x: float, z: float) -> Vector2:
+	var water := float(terrain.spec["water"]) if terrain.spec.get("water") != null else -9999.0
+	if terrain.sample(x, z) > water + 1.5:
+		return Vector2(x, z)
+	var step := maxf(float(terrain.spec["spacing"]), 20.0)
+	for ring_i in range(1, 48):
+		var radius := step * float(ring_i)
+		for k in 16:
+			var ang := float(k) / 16.0 * TAU
+			var px := x + cos(ang) * radius
+			var pz := z + sin(ang) * radius
+			if terrain.sample(px, pz) > water + 1.5:
+				return Vector2(px, pz)
+	return Vector2(float(terrain.spec["spawn"][0]), float(terrain.spec["spawn"][1]))
+
+
+func _on_pin(lat: float, lon: float) -> void:
+	if pin_label:
+		pin_label.text = "%.4f°, %.4f°" % [lat, lon]
+
+
+func _search_submitted(text: String) -> void:
+	var parts := text.replace(",", " ").split(" ", false)
+	if parts.size() < 2:
+		return
+	if not parts[0].is_valid_float() or not parts[1].is_valid_float():
+		return
+	if north_map:
+		north_map.drop_latlon(float(parts[0]), float(parts[1]))
+
+
+func _teleport_pin() -> void:
+	if north_map == null or not north_map.pin_ok:
+		return
+	var lat := north_map.pin.x
+	var lon := north_map.pin.y
+	_remember_pin(lat, lon)
+	for i in sites.size():
+		var spec: Dictionary = sites[i]
+		if not spec.has("bounds") or not spec.has("frame"):
+			continue
+		if not Geo.inside(lat, lon, spec["bounds"]):
+			continue
+		var local := Geo.to_local(lat, lon, spec["frame"])
+		_open_site(i, local)
+		terrain.ensure_patch(Vector2(active.global_position.x, active.global_position.z))
+		terrain.rebuild_around(active.global_position)
+		camera.snap()
+		camera.hold = false
+		_close_menu()
+		return
+	var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/north.json"))
+	if meta == null:
+		return
+	var landed: Dictionary = terrain.open_north(meta, lat, lon, _grain())
+	foliage.rebuild(terrain, terrain.color_tex)
+	var yaw_v := 0.0
+	_place(vehicle, float(landed["x"]), float(landed["z"]), yaw_v)
+	vehicle.blade_angle = -0.5
+	vehicle.linear_velocity = Vector3.ZERO
+	vehicle.angular_velocity = Vector3.ZERO
+	_place(human, float(landed["x"]) + 14.0, float(landed["z"]) - 10.0, yaw_v)
+	if kind == "human":
+		_place(human, float(landed["x"]), float(landed["z"]), yaw_v)
+	terrain.focus = active.global_position
+	_tune_site()
+	camera.snap()
+	camera.hold = false
+	if pin_label:
+		pin_label.text = "Landed %.4f°, %.4f°" % [float(landed["lat"]), float(landed["lon"])]
+	_close_menu()
+
+
+func _remember_pin(lat: float, lon: float) -> void:
+	if dig_test or shot_dir != "" or bench:
+		return
+	recent.push_front({"lat": lat, "lon": lon})
+	while recent.size() > 5:
+		recent.pop_back()
+	DirAccess.make_dir_recursive_absolute("user://world")
+	var file := FileAccess.open("user://world/pins.json", FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify({"pins": recent}))
+	_show_recent()
+
+
+func _load_recent() -> void:
+	if not FileAccess.file_exists("user://world/pins.json"):
+		return
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string("user://world/pins.json"))
+	if parsed is Dictionary:
+		recent = parsed.get("pins", [])
+	_show_recent()
+
+
+func _show_recent() -> void:
+	if recent_box == null:
+		return
+	for child in recent_box.get_children():
+		child.queue_free()
+	for pin in recent:
+		var lat := float(pin["lat"])
+		var lon := float(pin["lon"])
+		var b := _menu_button("%.2f, %.2f" % [lat, lon])
+		b.custom_minimum_size = Vector2(0, 28)
+		b.pressed.connect(north_map.drop_latlon.bind(lat, lon))
+		recent_box.add_child(b)
+
+
+func _mark_map() -> void:
+	if north_map == null or sites.is_empty():
+		return
+	var island: Dictionary = sites[0]
+	if island.has("bounds"):
+		var b: Dictionary = island["bounds"]
+		var poly := PackedVector2Array()
+		for i in 24:
+			var t := float(i) / 24.0
+			var lat: float
+			var lon: float
+			if t < 0.25:
+				var u := t / 0.25
+				lat = float(b["south"])
+				lon = lerpf(float(b["west"]), float(b["east"]), u)
+			elif t < 0.5:
+				var u2 := (t - 0.25) / 0.25
+				lon = float(b["east"])
+				lat = lerpf(float(b["south"]), float(b["north"]), u2)
+			elif t < 0.75:
+				var u3 := (t - 0.5) / 0.25
+				lat = float(b["north"])
+				lon = lerpf(float(b["east"]), float(b["west"]), u3)
+			else:
+				var u4 := (t - 0.75) / 0.25
+				lon = float(b["west"])
+				lat = lerpf(float(b["north"]), float(b["south"]), u4)
+			poly.append(Vector2(lat, lon))
+		north_map.set_highlight(poly)
+	var marks: Array = []
+	for i in range(1, sites.size()):
+		var spec: Dictionary = sites[i]
+		marks.append({"lat": float(spec["lat"]), "lon": float(spec["lon"]), "name": spec["name"]})
+	north_map.set_marks(marks)
+
+
+func _frame_spawn_shot() -> void:
+	var fwd := vehicle.forward()
+	camera.hold = true
+	camera.camera.global_position = vehicle.global_position - fwd * 16.0 + Vector3.UP * 8.0
+	camera.camera.look_at(vehicle.global_position + fwd * 8.0 + Vector3.UP * 1.2, Vector3.UP)
+
+
+func _run_map_test() -> void:
+	var back := Geo.polar_inverse(Geo.polar_forward(78.05, 13.64))
+	print("roundtrip ", back)
+	north_map.drop_latlon(51.45, -69.09)
+	_teleport_pin()
+	var island_id := str(terrain.spec.get("id"))
+	var island_h := terrain.sample(active.global_position.x, active.global_position.z)
+	print("island-pin ", island_id, " ", active.global_position, " h ", island_h)
+	north_map.drop_latlon(78.04862, 13.6441)
+	_teleport_pin()
+	var europe_id := str(terrain.spec.get("id"))
+	var europe_h := terrain.sample(active.global_position.x, active.global_position.z)
+	print("svalbard-pin ", europe_id, " ", active.global_position, " h ", europe_h)
+	north_map.drop_latlon(62.0, -70.0)
+	_teleport_pin()
+	var far_id := str(terrain.spec.get("id"))
+	var far_h := terrain.sample(active.global_position.x, active.global_position.z)
+	print("lowres-pin ", far_id, " ", active.global_position, " h ", far_h)
+	var ok := island_id == "rene-levasseur" and europe_id == "northern-2" and far_id.begins_with("north-") and island_h > 300.0 and far_h > 1.5
+	print("map-test ", "ok" if ok else "FAIL")
+	get_tree().quit(0 if ok else 1)
 
 
 func _go_region(index: int) -> void:
@@ -463,6 +694,8 @@ func _read_args() -> void:
 			bench = true
 		if arg == "--dig-test":
 			dig_test = true
+		if arg == "--map-test":
+			map_test = true
 	if OS.get_environment("ROLEPLAY_CAPTURE") == "1":
 		capture = true
 	if OS.has_feature("web"):
@@ -492,6 +725,33 @@ func _shots() -> void:
 		camera.camera.look_at(vehicle.global_position + fwd0 * 1.5 + Vector3.UP * 0.85, Vector3.UP)
 		await get_tree().process_frame
 		await _shot("dozer-close")
+	if _take("map-island") or _take("map-svalbard"):
+		_open_menu()
+		for _frame in 4:
+			await get_tree().process_frame
+		if north_map and north_map.size.x < 20.0:
+			north_map.size = Vector2(640, 540)
+		if _take("map-island"):
+			north_map.drop_latlon(51.4427, -69.0854)
+			await get_tree().process_frame
+			await _shot("map-island")
+			_teleport_pin()
+			_frame_spawn_shot()
+			for _frame2 in 3:
+				await get_tree().process_frame
+			await _shot("spawn-island")
+			_open_menu()
+			for _frame3 in 2:
+				await get_tree().process_frame
+		if _take("map-svalbard"):
+			north_map.drop_latlon(78.04862, 13.6441)
+			await get_tree().process_frame
+			await _shot("map-svalbard")
+			_teleport_pin()
+			_frame_spawn_shot()
+			for _frame4 in 3:
+				await get_tree().process_frame
+			await _shot("spawn-svalbard")
 	if _take("n1") or _take("hidden"):
 		camera.hold = false
 		camera.snap()

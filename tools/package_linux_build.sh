@@ -96,9 +96,10 @@ Controls
   is already down, so the ground moves. The reservoir is the shoreline.
   S reverse, A and D steer. Q raises the blade, E lowers it.
   The screen stays clear. Esc opens Settings and Esc closes it.
-  Settings switches Robot and Human, teleports between the island, the
-  Polar Desert Basin, Northern 2 — Europe, and Northern 3 — Russia,
-  and has Resume and Quit. Digs stay in a private local file.
+  Settings switches Robot and Human, and has Resume and Quit.
+  The Map tab is the north from 45 degrees up. Drag to pan, the wheel
+  zooms, a click drops a pin, and Teleport or Enter goes there.
+  Home: island returns to Île René-Levasseur. Digs stay in a private local file.
 
 Benchmark
   ./run.sh --bench

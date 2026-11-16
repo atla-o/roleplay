@@ -16,12 +16,12 @@
       "ring": {
         "heights": "ile_ring.u16",
         "mask": "ile_ring_mask.u8",
-        "cols": 1906,
-        "rows": 2094,
-        "spacing": 40.0,
+        "cols": 953,
+        "rows": 1047,
+        "spacing": 80.0,
         "origin": [-9360.0, -46160.0],
         "hmin": 347.02154541015625,
-        "hmax": 1022.0880126953125
+        "hmax": 1019.7111206054688
       },
       "water": 348.59,
       "outer_m": 0.0,

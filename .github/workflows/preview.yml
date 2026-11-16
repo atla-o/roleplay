@@ -85,7 +85,7 @@ jobs:
           /opt/godot/godot --headless --path godot --export-release "${{ matrix.preset }}" "../build/${{ matrix.binary }}"
           file "build/${{ matrix.binary }}"
           test -x "build/${{ matrix.binary }}"
-          # Terrain floats are inside the embedded pck, so the binary is large.
+          # The northern height tiles are inside the embedded pck, so the binary is large.
           test "$(stat -c%s "build/${{ matrix.binary }}")" -gt 40000000
 
       - name: Pack tarball

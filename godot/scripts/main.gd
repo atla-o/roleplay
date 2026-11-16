@@ -10,13 +10,8 @@ var camera: ChaseCamera
 var active: Node3D
 var kind := "robot"
 var ui: Control
-var hud_chrome: Control
+var menu_root: Control
 var panel: PanelContainer
-var hint: Label
-var hud_alpha := 0.0
-var hud_goal := 0.0
-var hud_pin := 0
-var hud_leave_at := -1.0
 var capture := false
 var dig_test := false
 var shot_drive := false
@@ -73,8 +68,11 @@ func _process(dt: float) -> void:
 		print("fps ", Engine.get_frames_per_second())
 	if active:
 		terrain.focus = active.global_position
-	_fade_hud(dt)
 	if panel and panel.visible:
+		vehicle.throttle = 0.0
+		vehicle.steer = 0.0
+		human.wish = Vector2.ZERO
+		human.jumping = false
 		return
 	var throttle := 0.0
 	var steer := 0.0
@@ -142,24 +140,15 @@ func _process(dt: float) -> void:
 		walker.jumping = Input.is_key_pressed(KEY_SPACE) or Input.is_joy_button_pressed(0, JOY_BUTTON_A)
 
 
-func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_H or event.keycode == KEY_TAB:
-			_cycle_hud_pin()
-			get_viewport().set_input_as_handled()
-
-
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
-			if panel:
-				panel.visible = false
-			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-			get_viewport().set_input_as_handled()
-			return
+		_toggle_menu()
+		get_viewport().set_input_as_handled()
+		return
+	if panel and panel.visible:
+		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if panel == null or not panel.visible:
-			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-			_hide_hud_if_auto()
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		camera.orbit(event.relative.x * 0.004, event.relative.y * 0.0025)
 
@@ -306,63 +295,50 @@ func _ui() -> void:
 	ui.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(ui)
-	var hot := Control.new()
-	hot.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	hot.offset_bottom = 28.0
-	hot.mouse_filter = Control.MOUSE_FILTER_STOP
-	hot.mouse_entered.connect(_hud_enter)
-	hot.mouse_exited.connect(_hud_leave)
-	ui.add_child(hot)
-	hud_chrome = Control.new()
-	hud_chrome.set_anchors_preset(Control.PRESET_FULL_RECT)
-	hud_chrome.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hud_chrome.modulate.a = 0.0
-	hud_chrome.visible = false
-	ui.add_child(hud_chrome)
-	var button := Button.new()
-	button.text = "Settings"
-	button.focus_mode = Control.FOCUS_NONE
-	button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	button.offset_left = -128.0
-	button.offset_top = 14.0
-	button.offset_right = -16.0
-	button.offset_bottom = 48.0
-	button.pressed.connect(_toggle_menu)
-	button.mouse_entered.connect(_hud_enter)
-	button.mouse_exited.connect(_hud_leave)
-	hud_chrome.add_child(button)
+	menu_root = Control.new()
+	menu_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	menu_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	menu_root.visible = false
+	ui.add_child(menu_root)
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0.02, 0.03, 0.04, 0.62)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	menu_root.add_child(dim)
 	panel = PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	panel.offset_left = -300.0
-	panel.offset_top = 56.0
-	panel.offset_right = -16.0
-	panel.offset_bottom = 380.0
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.offset_left = -200.0
+	panel.offset_top = -248.0
+	panel.offset_right = 200.0
+	panel.offset_bottom = 248.0
 	panel.visible = false
-	panel.mouse_entered.connect(_hud_enter)
-	panel.mouse_exited.connect(_hud_leave)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.07, 0.08, 0.09, 0.94)
-	style.corner_radius_top_left = 8
-	style.corner_radius_top_right = 8
-	style.corner_radius_bottom_left = 8
-	style.corner_radius_bottom_right = 8
-	style.content_margin_left = 14
-	style.content_margin_right = 14
-	style.content_margin_top = 12
-	style.content_margin_bottom = 12
+	style.bg_color = Color(0.08, 0.09, 0.1, 0.96)
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	style.content_margin_left = 18
+	style.content_margin_right = 18
+	style.content_margin_top = 16
+	style.content_margin_bottom = 16
 	panel.add_theme_stylebox_override("panel", style)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
 	panel.add_child(box)
+	var title := Label.new()
+	title.text = "Settings"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
 	var body_label := Label.new()
 	body_label.text = "Body"
 	box.add_child(body_label)
 	var bodies := HBoxContainer.new()
+	bodies.add_theme_constant_override("separation", 8)
 	box.add_child(bodies)
 	for entry in [["Robot", "robot"], ["Human", "human"]]:
-		var b := Button.new()
-		b.text = entry[0]
-		b.focus_mode = Control.FOCUS_NONE
+		var b := _menu_button(entry[0])
 		b.pressed.connect(_activate.bind(entry[1]))
 		bodies.add_child(b)
 	var place_label := Label.new()
@@ -370,29 +346,26 @@ func _ui() -> void:
 	box.add_child(place_label)
 	for i in sites.size():
 		var spec: Dictionary = sites[i]
-		var region := Button.new()
-		region.text = str(spec["name"])
-		region.focus_mode = Control.FOCUS_NONE
+		var region := _menu_button(str(spec["name"]))
 		var site_i := i
 		region.pressed.connect(func() -> void: _go_region(site_i))
 		box.add_child(region)
-	hud_chrome.add_child(panel)
-	if capture:
-		return
-	hint = Label.new()
-	hint.text = "W drive"
-	hint.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	hint.offset_left = -160.0
-	hint.offset_top = -64.0
-	hint.offset_right = 160.0
-	hint.offset_bottom = -32.0
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ui.add_child(hint)
-	var fade := create_tween()
-	fade.tween_interval(2.4)
-	fade.tween_property(hint, "modulate:a", 0.0, 1.4)
-	fade.tween_callback(hint.queue_free)
+	var resume := _menu_button("Resume")
+	resume.pressed.connect(_close_menu)
+	box.add_child(resume)
+	var quit := _menu_button("Quit")
+	quit.pressed.connect(_quit_game)
+	box.add_child(quit)
+	menu_root.add_child(panel)
+
+
+func _menu_button(text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(0, 36)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return b
 
 
 func _go_region(index: int) -> void:
@@ -401,87 +374,40 @@ func _go_region(index: int) -> void:
 	terrain.rebuild_around(active.global_position)
 	camera.snap()
 	camera.hold = false
-	if panel:
-		panel.visible = false
-	if hud_pin == 0:
-		hud_leave_at = Time.get_ticks_msec() / 1000.0 + 1.6
+	_close_menu()
 
 
 func _toggle_menu() -> void:
-	_hud_enter()
-	panel.visible = not panel.visible
+	if panel != null and panel.visible:
+		_close_menu()
+	else:
+		_open_menu()
+
+
+func _open_menu() -> void:
+	if menu_root:
+		menu_root.visible = true
+	if panel:
+		panel.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	vehicle.throttle = 0.0
+	vehicle.steer = 0.0
+	human.wish = Vector2.ZERO
+	human.jumping = false
 
 
-func _cursor_is_free() -> bool:
-	return Input.mouse_mode == Input.MOUSE_MODE_VISIBLE
-
-
-func _hud_enter() -> void:
-	if not _cursor_is_free() or hud_pin == -1:
-		return
-	hud_goal = 1.0
-	hud_leave_at = -1.0
-
-
-func _hud_leave() -> void:
-	if hud_pin != 0:
-		return
-	hud_leave_at = Time.get_ticks_msec() / 1000.0 + 2.0
-
-
-func _hide_hud_if_auto() -> void:
-	if hud_pin != 0:
-		return
-	hud_goal = 0.0
-	hud_leave_at = -1.0
+func _close_menu() -> void:
+	if menu_root:
+		menu_root.visible = false
 	if panel:
 		panel.visible = false
-
-
-func _cycle_hud_pin() -> void:
-	if hud_pin == 0:
-		hud_pin = 1
-		hud_goal = 1.0
-	elif hud_pin == 1:
-		hud_pin = -1
-		hud_goal = 0.0
-		if panel:
-			panel.visible = false
-	else:
-		hud_pin = 0
-		hud_goal = 0.0
-
-
-func _fade_hud(dt: float) -> void:
-	if hud_chrome == null:
+	if capture or dig_test or shot_dir != "":
 		return
-	if Input.mouse_mode != Input.MOUSE_MODE_VISIBLE and hud_pin == 0:
-		hud_goal = 0.0
-		if panel:
-			panel.visible = false
-	elif hud_pin == 0 and hud_leave_at >= 0.0 and Time.get_ticks_msec() / 1000.0 >= hud_leave_at:
-		hud_goal = 0.0
-		if panel:
-			panel.visible = false
-		hud_leave_at = -1.0
-	elif hud_pin == 1:
-		hud_goal = 1.0
-	elif hud_pin == -1:
-		hud_goal = 0.0
-	hud_alpha = move_toward(hud_alpha, hud_goal, dt * 3.2)
-	hud_chrome.modulate.a = hud_alpha
-	hud_chrome.visible = hud_alpha > 0.04
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
-func _show_hud() -> void:
-	hud_pin = 1
-	hud_goal = 1.0
-	hud_alpha = 1.0
-	if hud_chrome:
-		hud_chrome.modulate.a = 1.0
-		hud_chrome.visible = true
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+func _quit_game() -> void:
+	get_tree().quit()
 
 
 func _grain() -> Texture2D:
@@ -548,24 +474,14 @@ func _shots() -> void:
 		if _take("hidden"):
 			await _shot("hidden")
 	if _take("hover"):
-		_show_hud()
-		panel.visible = false
+		_close_menu()
 		await get_tree().process_frame
 		await _shot("hover")
 	if _take("settings"):
-		_show_hud()
-		panel.visible = true
+		_open_menu()
 		await get_tree().process_frame
 		await _shot("settings")
-		panel.visible = false
-	if hud_chrome:
-		hud_pin = -1
-		hud_goal = 0.0
-		hud_alpha = 0.0
-		hud_chrome.modulate.a = 0.0
-		hud_chrome.visible = false
-		if panel:
-			panel.visible = false
+		_close_menu()
 	if _take("dig-before") or _take("dig-after"):
 		camera.hold = false
 		camera.snap()

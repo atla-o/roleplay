@@ -95,10 +95,9 @@ Controls
   You start in the dozer on Northern 1 — Canada. W drives, and the blade
   is already down, so the ground moves.
   S reverse, A and D steer. Q raises the blade, E lowers it.
-  Move the mouse to the top edge to show Settings. H or Tab pins it
-  shown, then hidden, then back to hover. Esc releases the mouse.
-  Settings switches Robot and Human, and teleports to Northern 1 — Canada,
-  Northern 2 — Europe, or Northern 3 — Russia.
+  The screen stays clear. Esc opens Settings and Esc closes it.
+  Settings switches Robot and Human, teleports to Northern 1 — Canada,
+  Northern 2 — Europe, or Northern 3 — Russia, and has Resume and Quit.
 
 Benchmark
   ./run.sh --bench

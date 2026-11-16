@@ -8,7 +8,7 @@ Controls are the same on Linux and in the browser.
 
 - **Robot.** W throttle, S brake into reverse, A and D steer. Q raises the blade, E lowers it. Hold the left mouse button to lower the blade and the right button to raise it. The mouse, or the right stick, orbits the chase camera. It recenters after about a second and a half.
 - **Human.** A 1.8 m person, camera behind them. WASD walks, Shift runs, Space jumps. Walk, run and idle come from the character's animation clips.
-- **Settings.** Nothing is on screen until the mouse, with a free cursor, touches the top edge. Settings then fades in, and fades out a couple of seconds after the pointer leaves. H or Tab pins it shown, then hidden, then back to hover. It switches Robot and Human, and teleports to Northern 1 — Canada, Northern 2 — Europe, or Northern 3 — Russia. Esc releases the mouse.
+- **Settings.** The screen stays clear. Esc opens a menu and Esc closes it. The menu switches Robot and Human, teleports to Northern 1 — Canada, Northern 2 — Europe, or Northern 3 — Russia, and has Resume and Quit. You start in the dozer on Northern 1 with the blade down, so W cuts ground.
 - **Water.** Shallows slow you. Deeper water stops you. The outer ground falls toward the water so the tile is not a square wall.
 - **Gamepad.** Left stick drives, triggers throttle and reverse, bumpers move the blade, right stick looks, bottom face button jumps.
 

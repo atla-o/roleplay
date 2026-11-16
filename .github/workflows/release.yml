@@ -145,6 +145,6 @@ jobs:
 
           \`roleplay\` tries Vulkan Forward+. If the window stays black, run \`~/.local/share/roleplay/run-compat.sh\`. That forces OpenGL Compatibility. \`./uninstall.sh\` removes the install and restores \`~/.local/bin/roleplay.bak\` if a previous launcher was saved.
 
-          You start in the dozer on Northern 1 — Canada. W drives. Move the mouse to the top edge for Settings.
+          You start in the dozer on Northern 1 — Canada, blade down. W drives. Esc opens Settings: body, region, Resume, and Quit. Esc closes it. The screen stays clear.
           EOF
           )"

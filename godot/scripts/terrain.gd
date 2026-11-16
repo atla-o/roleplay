@@ -49,7 +49,7 @@ func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
 	field.cols = cols
 	field.rows = rows
 	field.spacing = float(spec["spacing"])
-	field.heights = bytes.to_float32_array()
+	field.heights = _decode_heights(str(spec["heights"]), bytes, float(spec["hmin"]), float(spec["hmax"]))
 	field.disturb = PackedByteArray()
 	field.disturb.resize(cols * rows)
 	field.changed = PackedInt32Array()
@@ -357,6 +357,19 @@ func _clear() -> void:
 		ground.queue_free()
 		ground = null
 	window_origin = Vector2i(-99999, -99999)
+
+
+func _decode_heights(name: String, bytes: PackedByteArray, hmin: float, hmax: float) -> PackedFloat32Array:
+	if not name.ends_with(".u16"):
+		return bytes.to_float32_array()
+	var span := maxf(hmax - hmin, 0.001)
+	var count := bytes.size() / 2
+	var out := PackedFloat32Array()
+	out.resize(count)
+	for i in count:
+		var u := float(bytes.decode_u16(i * 2))
+		out[i] = hmin + (u / 65535.0) * span
+	return out
 
 
 func _build_height_texture() -> void:

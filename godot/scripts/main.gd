@@ -208,9 +208,10 @@ func _world() -> void:
 	sky_mat.rayleigh_coefficient = 2.4
 	sky_mat.mie_coefficient = 0.035
 	sky_mat.mie_eccentricity = 0.78
-	sky_mat.turbidity = 6.0
-	sky_mat.ground_color = Color(0.32, 0.30, 0.26)
-	sky_mat.energy_multiplier = 1.05
+	sky_mat.ground_color = Color(0.14, 0.18, 0.14)
+	sky_mat.energy_multiplier = 0.72
+	sky_mat.mie_coefficient = 0.06
+	sky_mat.turbidity = 10.0
 	sky.sky_material = sky_mat
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
@@ -220,10 +221,10 @@ func _world() -> void:
 	env.tonemap_exposure = 0.68
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-	env.fog_density = 0.00022
-	env.fog_aerial_perspective = 0.72
-	env.fog_light_color = Color(0.62, 0.72, 0.84)
-	env.fog_sun_scatter = 0.18
+	env.fog_density = 0.00026
+	env.fog_aerial_perspective = 0.55
+	env.fog_light_color = Color(0.68, 0.74, 0.78)
+	env.fog_sun_scatter = 0.08
 	if RenderingServer.get_current_rendering_method() == "forward_plus":
 		env.ssao_enabled = true
 		env.ssao_radius = 2.2
@@ -256,7 +257,7 @@ func _world() -> void:
 	sun.shadow_bias = 0.18
 	sun.shadow_normal_bias = 2.4
 	sun.shadow_blur = 2.2
-	sun.light_angular_distance = 0.45
+	sun.light_angular_distance = 0.12
 	sun.directional_shadow_blend_splits = true
 	add_child(sun)
 
@@ -310,13 +311,29 @@ func _open_site(index: int, at: Vector2 = Vector2(-1.0e9, -1.0e9)) -> void:
 func _tune_site() -> void:
 	if world == null:
 		return
+	_place_sun()
 	var forest := bool(terrain.spec.get("forest", false))
 	world.ambient_light_energy = 1.15 if forest else 0.62
 	world.tonemap_exposure = 0.92 if forest else 0.7
 	if world.ssao_enabled:
 		world.ssao_intensity = 0.65 if forest else 1.1
 	if sun:
-		sun.light_energy = 1.35 if forest else 1.1
+		sun.light_energy = 1.15 if forest else 1.05
+
+
+func _place_sun() -> void:
+	if sun == null or terrain == null or terrain.spec.is_empty():
+		return
+	var lat := float(terrain.spec["lat"]) if terrain.spec.has("lat") else 51.4
+	# Mid-November solar declination. Noon elevation = 90° − latitude + declination.
+	var elevation := clampf(90.0 - lat + -18.4, 6.0, 48.0)
+	# +Z is north in these tiles, and a DirectionalLight shines along -Z, so yaw 180
+	# sends the November sun from the south.
+	sun.rotation_degrees = Vector3(-elevation, 180.0, 0.0)
+	sun.light_color = Color(1.0, 0.9, 0.76) if elevation < 24.0 else Color(1.0, 0.96, 0.9)
+	if terrain.water and terrain.water.material_override is ShaderMaterial:
+		var beam := -sun.global_transform.basis.z
+		(terrain.water.material_override as ShaderMaterial).set_shader_parameter("sun_dir", beam)
 
 
 func _place(body: Node3D, x: float, z: float, yaw_v: float) -> void:
@@ -711,6 +728,33 @@ func _mark_map() -> void:
 	north_map.set_marks([])
 
 
+func _frame_reservoir() -> void:
+	var origin := vehicle.global_position
+	var water := float(terrain.spec["water"]) if terrain.spec.get("water") != null else -9999.0
+	var stand := origin
+	var aim := Vector3(1.0, 0.0, 0.0)
+	for step in [28.0, 48.0, 70.0]:
+		for k in 24:
+			var ang := TAU * float(k) / 24.0
+			var dir := Vector3(cos(ang), 0.0, sin(ang))
+			var p: Vector3 = origin + dir * step
+			var h := terrain.sample(p.x, p.z)
+			if h < water + 2.5:
+				continue
+			var far_at: Vector3 = p + dir * 55.0
+			if terrain.sample(far_at.x, far_at.z) > water + 0.6:
+				continue
+			stand = Vector3(p.x, h + 2.6, p.z)
+			aim = dir
+			break
+		if stand != origin:
+			break
+	vehicle.visible = false
+	camera.hold = true
+	camera.camera.global_position = stand
+	camera.camera.look_at(stand + aim * 90.0 + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+
+
 func _frame_spawn_shot() -> void:
 	var fwd := vehicle.forward()
 	camera.hold = true
@@ -877,6 +921,11 @@ func _shots() -> void:
 			for _frame2 in 3:
 				await get_tree().process_frame
 			await _shot("spawn-island")
+			if _take("island-shore"):
+				_frame_reservoir()
+				for _shore in 3:
+					await get_tree().process_frame
+				await _shot("island-shore")
 			_open_menu()
 			for _frame3 in 2:
 				await get_tree().process_frame

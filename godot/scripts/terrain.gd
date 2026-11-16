@@ -152,6 +152,7 @@ func open_north(meta: Dictionary, lat: float, lon: float, grain: Texture2D) -> D
 		"repose": 34.0,
 		"water": 0.0,
 		"forest": false,
+		"lat": lat,
 		"spawn": [0.0, 0.0],
 		"view_origin": [float(col - c0) * step, float(row - r0) * step],
 	}

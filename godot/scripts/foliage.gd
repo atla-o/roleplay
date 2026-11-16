@@ -8,9 +8,7 @@ var bushes: Array = []
 var boulders: Array = []
 
 func _ready() -> void:
-	for path in ["res://assets/models/pine_a.glb", "res://assets/models/pine_b.glb"]:
-		for mesh in _meshes(path):
-			pines.append(_trim_trunk(mesh))
+	pines = [_spruce_mesh(), _fir_mesh()]
 	for path in ["res://assets/models/birch_1.glb", "res://assets/models/birch_2.glb", "res://assets/models/birch_4.glb"]:
 		var baked := _baked_tree(path)
 		if baked != null:
@@ -65,13 +63,13 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 					grass.append(_xf(east, h, north, roll * TAU, 0.9))
 				continue
 			var cell := span / float(img.get_width()) * float(step)
-			var gap := 6.0 if excess > 0.11 else 10.0
+			var gap := 5.0 if excess > 0.1 else 8.0
 			var n := maxi(int(cell / gap), 1)
 			for iy in n:
 				for ix in n:
 					var jx := _hash(x + ix * 3 + 1, y + iy * 2)
 					var jz := _hash(x + ix + 4, y + iy * 5 + 2)
-					var birch_stand: bool = jx > 0.78 or (lum > 0.18 and excess < 0.12)
+					var birch_stand: bool = jx > 0.9
 					var ex := east + (float(ix) + jx) * (cell / float(n))
 					var nz := north + (float(iy) + jz) * (cell / float(n))
 					var hh := terrain.sample(ex, nz)
@@ -83,9 +81,9 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 					var sc := 0.7 + jz * 0.9
 					var yaw := (jx + jz) * TAU
 					hh -= 0.22
-					if d2 < 170.0 and near.size() + birch_near.size() < 1200:
-						if birch_stand and jx > 0.42:
-							birch_near.append(_xf(ex, hh, nz, yaw, sc * 2.4))
+					if d2 < 220.0 and near.size() + birch_near.size() < 2000:
+						if birch_stand and birch_near.size() < 36 and d2 > 46.0:
+							birch_near.append(_xf(ex, hh, nz, yaw, sc * 1.35))
 						else:
 							near.append(_xf(ex, hh, nz, yaw, sc))
 					elif d2 < 1400.0 and far.size() + birch_far.size() < 7000:
@@ -102,20 +100,21 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 					logs.append(_log_xf(east, h + 0.12, north, roll * TAU))
 			elif _hash(x + 1, y + 9) > 0.62 and shrub.size() < 900:
 				shrub.append(_xf(east, h, north, roll * 3.0, 0.7 + roll * 0.6))
-	var spots: Array[Vector2] = [Vector2(-8.0, 12.0), Vector2(10.0, 18.0), Vector2(-18.0, 26.0)]
-	for spot in spots:
-		var p: Vector2 = spawn + spot
-		var bh := terrain.sample(p.x, p.y)
-		if bh > water + 1.5:
-			birch_near.append(_xf(p.x, bh - 0.05, p.y, 0.4, 2.5))
 	var litter: Array[Vector2] = [Vector2(-4.0, 6.0), Vector2(-10.0, 9.0), Vector2(2.0, 8.0), Vector2(-7.0, 14.0)]
 	for spot2 in litter:
 		var q: Vector2 = spawn + spot2
 		var qh := terrain.sample(q.x, q.y)
 		shrub.append(_xf(q.x, qh, q.y, 1.2, 0.85))
 		logs.append(_log_xf(q.x + 1.4, qh + 0.1, q.y + 0.6, 0.7))
-	for mesh in pines:
-		_spawn(mesh, near, true, 0.0, 230.0)
+	var spruce: Array[Transform3D] = []
+	var fir: Array[Transform3D] = []
+	for i in near.size():
+		if i % 5 == 0:
+			fir.append(near[i])
+		else:
+			spruce.append(near[i])
+	_spawn(pines[0], spruce, true, 0.0, 240.0)
+	_spawn(pines[1], fir, true, 0.0, 240.0)
 	_spawn_variants(birches, birch_near, true, 0.0, 230.0)
 	_spawn(_impostor(), far, false, 160.0, 1700.0)
 	_spawn_variants(birches, birch_far, false, 160.0, 1700.0)
@@ -338,10 +337,10 @@ func _birch_impostor() -> ArrayMesh:
 func _impostor() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_cone(st, 0.0, 1.6, 0.16, 0.1, Color(0.28, 0.16, 0.08))
-	_cone(st, 1.3, 3.4, 1.15, 0.72, Color(0.1, 0.24, 0.1))
-	_cone(st, 2.8, 5.1, 0.85, 0.42, Color(0.14, 0.3, 0.12))
-	_cone(st, 4.5, 6.8, 0.48, 0.04, Color(0.22, 0.38, 0.16))
+	_cone(st, 0.0, 1.4, 0.11, 0.06, Color(0.22, 0.14, 0.08))
+	_cone(st, 1.0, 3.1, 0.9, 0.5, Color(0.045, 0.12, 0.055))
+	_cone(st, 2.4, 4.8, 0.66, 0.28, Color(0.06, 0.15, 0.065))
+	_cone(st, 4.0, 6.6, 0.34, 0.02, Color(0.08, 0.18, 0.08))
 	st.generate_normals()
 	var mesh := st.commit()
 	var mat := ShaderMaterial.new()
@@ -423,6 +422,55 @@ func _sphere(st: SurfaceTool, center: Vector3, radius: float, color: Color) -> v
 			for p in [p00, p01, p10, p10, p01, p11]:
 				st.set_color(color)
 				st.add_vertex(p)
+
+
+func _spruce_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_whorl(st, 0.0, 1.5, 0.12, 0.05, Color(0.24, 0.15, 0.08), 7)
+	for i in 8:
+		var t := float(i) / 7.0
+		var y0 := 0.7 + t * 6.2
+		var rad := lerpf(1.15, 0.08, t)
+		var green := Color(0.07, 0.2, 0.09).lerp(Color(0.14, 0.28, 0.12), t)
+		_whorl(st, y0, y0 + lerpf(1.35, 0.7, t), rad, rad * 0.12, green, 8)
+	st.generate_normals()
+	var mesh := st.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/foliage.gdshader")
+	mesh.surface_set_material(0, mat)
+	return mesh
+
+
+func _fir_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_whorl(st, 0.0, 1.3, 0.16, 0.07, Color(0.28, 0.17, 0.09), 7)
+	for i in 6:
+		var t := float(i) / 5.0
+		var y0 := 0.6 + t * 5.4
+		var rad := lerpf(1.55, 0.16, t)
+		var green := Color(0.06, 0.16, 0.07).lerp(Color(0.12, 0.24, 0.1), t)
+		_whorl(st, y0, y0 + lerpf(1.7, 0.9, t), rad, rad * 0.2, green, 8)
+	st.generate_normals()
+	var mesh := st.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/foliage.gdshader")
+	mesh.surface_set_material(0, mat)
+	return mesh
+
+
+func _whorl(st: SurfaceTool, y0: float, y1: float, r0: float, r1: float, color: Color, sides: int) -> void:
+	for i in sides:
+		var a0 := TAU * float(i) / float(sides)
+		var a1 := TAU * float(i + 1) / float(sides)
+		var b0 := Vector3(cos(a0) * r0, y0, sin(a0) * r0)
+		var b1 := Vector3(cos(a1) * r0, y0, sin(a1) * r0)
+		var t0 := Vector3(cos(a0) * r1, y1, sin(a0) * r1)
+		var t1 := Vector3(cos(a1) * r1, y1, sin(a1) * r1)
+		for p in [b0, t0, b1, b1, t0, t1]:
+			st.set_color(color)
+			st.add_vertex(p)
 
 
 func _cone(st: SurfaceTool, y0: float, y1: float, r0: float, r1: float, color: Color) -> void:

@@ -82,8 +82,10 @@ void fragment() {
 	float fres = pow(1.0 - clamp(dot(view_w, wn), 0.0, 1.0), 2.8);
 	vec3 color = mix(water, sky, fres * 0.28 + 0.04);
 
-	float foam = (1.0 - smoothstep(0.0, 1.6, depth)) * (1.0 - smoothstep(0.35, 0.9, sheet));
-	color = mix(color, vec3(0.45, 0.66, 0.7), foam * 0.18);
+	float foam = (1.0 - smoothstep(0.0, 2.4, depth)) * (1.0 - smoothstep(0.15, 1.15, sheet));
+	float lip = smoothstep(0.0, 0.18, depth) * (1.0 - smoothstep(0.18, 0.85, depth));
+	color = mix(color, vec3(0.62, 0.74, 0.72), foam * 0.55);
+	color = mix(color, vec3(0.82, 0.88, 0.86), lip * 0.7);
 
 	float ndot = clamp(dot(refl, normalize(sun_dir)), 0.0, 1.0);
 	float spark = step(0.96, hash21(floor(world_pos.xz * 2.5)));

@@ -97,23 +97,38 @@ void fragment() {
 	vec3 alb = mix(detail, sat, 0.72);
 	alb = alb / (1.0 + max(alb - vec3(0.7), vec3(0.0)) * 1.2);
 	if (forest > 0.5) {
-		float canopy = clamp((sat.g - max(sat.r, sat.b)) * 4.0, 0.0, 1.0);
-		detail = mix(floor_t, rock, smoothstep(0.22, 0.55, slope));
+		float canopy = clamp((sat.g - max(sat.r, sat.b)) * 5.0, 0.0, 1.0);
+		float sat_max = max(sat.r, max(sat.g, sat.b));
+		float sat_min = min(sat.r, min(sat.g, sat.b));
+		float chroma = sat_max - sat_min;
+		// Pale, low-chroma ground on the shield is lichen and bare rock, not lawn.
+		float lichen = (1.0 - smoothstep(0.035, 0.14, chroma)) * smoothstep(0.16, 0.42, sat_l);
+		float wetland = smoothstep(0.015, 0.1, sat.b - sat.r) * (1.0 - canopy) * (1.0 - smoothstep(0.05, 0.3, slope));
 		float shore_w = 0.0;
 		if (water_y > -100.0) {
-			shore_w = 1.0 - smoothstep(0.05, 3.2, world_pos.y - water_y);
+			shore_w = 1.0 - smoothstep(0.0, 1.6, world_pos.y - water_y);
 		}
-		detail = mix(detail, shore, shore_w * (1.0 - slope) * 0.45);
-		alb = mix(detail, sat, 0.62 + canopy * 0.18);
-		alb *= 1.05 + sat_l * 0.12;
-		vec3 moss = vec3(0.16, 0.28, 0.14);
-		float moss_w = canopy * (1.0 - smoothstep(0.08, 0.4, slope));
-		alb = mix(alb, moss, moss_w * 0.22);
+		vec3 moss = stochastic(forest_alb, world_pos.xz * 0.18);
+		moss = mix(moss, vec3(0.09, 0.16, 0.07), 0.4);
+		vec3 lichen_c = mix(rock, vec3(0.48, 0.46, 0.36), 0.4);
+		vec3 bog = vec3(0.07, 0.1, 0.06);
+		vec3 gravel_shore = mix(mix(gravel, rock, 0.45), vec3(0.34, 0.32, 0.28), 0.35);
+		detail = mix(moss, lichen_c, clamp(lichen + smoothstep(0.25, 0.6, slope), 0.0, 1.0));
+		detail = mix(detail, bog, wetland * 0.7);
+		detail = mix(detail, gravel_shore, shore_w * (1.0 - slope));
+		float lawn = smoothstep(0.28, 0.62, sat.g) * (1.0 - canopy);
+		float sat_w = mix(0.34 + canopy * 0.3, 0.16, max(lawn, shore_w));
+		alb = mix(detail, sat, sat_w);
+		float bump = texture(forest_alb, world_pos.xz * 0.14).g;
+		float bump_x = texture(forest_alb, world_pos.xz * 0.14 + vec2(0.03, 0.0)).g;
+		float bump_z = texture(forest_alb, world_pos.xz * 0.14 + vec2(0.0, 0.03)).g;
+		vec3 bumped = normalize(nrm + vec3((bump - bump_x) * 1.6, 0.0, (bump - bump_z) * 1.6));
+		NORMAL = normalize((VIEW_MATRIX * vec4(bumped, 0.0)).xyz);
 	}
 	float wet = 0.0;
 	if (water_y > -100.0) {
 		float above = world_pos.y - water_y;
-		wet = (1.0 - smoothstep(0.0, 0.28, above)) * (1.0 - smoothstep(0.1, 0.4, slope));
+		wet = (1.0 - smoothstep(0.0, 1.35, above)) * (1.0 - smoothstep(0.12, 0.45, slope));
 		vec3 wet_soil = alb * vec3(0.72, 0.66, 0.55);
 		alb = mix(alb, wet_soil, wet * 0.55);
 	}

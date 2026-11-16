@@ -65,6 +65,27 @@ func setup_heights(next_spec: Dictionary, heights: PackedFloat32Array, albedo: T
 	baseline = field.heights.duplicate()
 	if persist:
 		_load_edits()
+	_build_height_texture()
+	_build_disturb_texture()
+	mat = ShaderMaterial.new()
+	mat.shader = load("res://shaders/ground.gdshader")
+	var span := float(spec["cols"] - 1) * field.spacing
+	patch = Soil.Patch.new(field)
+	fine_img = Image.create(Soil.Patch.N, Soil.Patch.N, false, Image.FORMAT_RGBA8)
+	fine_img.fill(Color(0, 0, 0, 1))
+	fine_tex = ImageTexture.create_from_image(fine_img)
+	fine_mesh = MeshInstance3D.new()
+	fine_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	add_child(fine_mesh)
+	_bind_ground(span)
+	_build_collision()
+	_build_apron()
+	_build_water()
+	_load_ring()
+	var spawn := Vector3(float(spec["spawn"][0]), 0.0, float(spec["spawn"][1]))
+	ensure_patch(Vector2(spawn.x, spawn.z))
+	rebuild_around(spawn)
+	_build_ring(spawn)
 
 
 ## A window of the coarse polar grid, centred on land. Returns the local
@@ -147,27 +168,6 @@ func _nearest_land(full: PackedFloat32Array, posts: int, col: int, row: int) -> 
 				best_d = d
 				best = Vector2i(c, r)
 	return best
-	_build_height_texture()
-	_build_disturb_texture()
-	mat = ShaderMaterial.new()
-	mat.shader = load("res://shaders/ground.gdshader")
-	var span := float(spec["cols"] - 1) * field.spacing
-	patch = Soil.Patch.new(field)
-	fine_img = Image.create(Soil.Patch.N, Soil.Patch.N, false, Image.FORMAT_RGBA8)
-	fine_img.fill(Color(0, 0, 0, 1))
-	fine_tex = ImageTexture.create_from_image(fine_img)
-	fine_mesh = MeshInstance3D.new()
-	fine_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-	add_child(fine_mesh)
-	_bind_ground(span)
-	_build_collision()
-	_build_apron()
-	_build_water()
-	_load_ring()
-	var spawn := Vector3(float(spec["spawn"][0]), 0.0, float(spec["spawn"][1]))
-	ensure_patch(Vector2(spawn.x, spawn.z))
-	rebuild_around(spawn)
-	_build_ring(spawn)
 
 
 func sample(x: float, z: float) -> float:
@@ -217,12 +217,16 @@ func _coarse_sample(x: float, z: float) -> float:
 
 func stamp_tracks(east: float, north: float, fx: float, fz: float) -> void:
 	ensure_patch(Vector2(east, north))
+	if patch == null:
+		return
 	if Soil.stamp_tracks(patch.field, east - patch.origin.x, north - patch.origin.y, fx, fz):
 		_flush_fine()
 
 
 func cut_blade(east: float, north: float, fx: float, fz: float, width: float, edge_y: float, repose: float) -> float:
 	ensure_patch(Vector2(east, north))
+	if patch == null:
+		return 0.0
 	var moved: float = Soil.plane_blade(patch.field, east - patch.origin.x, north - patch.origin.y, fx, fz, width, edge_y, repose)
 	if moved > 0.0:
 		_flush_fine()

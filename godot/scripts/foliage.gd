@@ -6,21 +6,33 @@ var birches: Array = []
 var grasses: Array = []
 var bushes: Array = []
 var boulders: Array = []
+var spruce_near: ArrayMesh
+var spruce_far: ArrayMesh
+var fir_near: ArrayMesh
+var fir_far: ArrayMesh
+var birch_card: ArrayMesh
+var shrub_card: ArrayMesh
 
 func _ready() -> void:
-	pines = [_spruce_mesh(), _fir_mesh()]
-	for path in ["res://assets/models/birch_1.glb", "res://assets/models/birch_2.glb", "res://assets/models/birch_4.glb"]:
-		var baked := _baked_tree(path)
-		if baked != null:
-			birches.append(baked)
-	grasses = _meshes("res://assets/models/grass_short.glb") + _meshes("res://assets/models/grass_tall.glb")
-	bushes = _meshes("res://assets/models/bush.glb")
+	var shader: Shader = load("res://shaders/tree_card.gdshader")
+	spruce_near = _card(load("res://assets/textures/spruce_card.png") as Texture2D, shader, 3, 2.92, 16.0, 0.45)
+	spruce_far = _card(load("res://assets/textures/spruce_card.png") as Texture2D, shader, 2, 2.92, 16.0, 0.2)
+	fir_near = _card(load("res://assets/textures/fir_card.png") as Texture2D, shader, 3, 3.71, 16.0, 0.35)
+	fir_far = _card(load("res://assets/textures/fir_card.png") as Texture2D, shader, 2, 3.71, 16.0, 0.15)
+	birch_card = _card(load("res://assets/textures/birch_card.png") as Texture2D, shader, 2, 2.15, 14.0, 0.2)
+	shrub_card = _card(load("res://assets/textures/shrub_card.png") as Texture2D, shader, 2, 0.9, 0.9, 0.04)
+	pines = [spruce_near, fir_near]
 	boulders = _meshes("res://assets/models/boulder.glb")
 
 
 func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 	for child in get_children():
 		child.queue_free()
+	if str(terrain.spec.get("id")) == "rene-levasseur" and spruce_near != null:
+		var cover_tex := load("res://data/ile_cover.png") as Texture2D
+		if cover_tex != null and cover_tex.get_image() != null:
+			_place_boreal(terrain, cover_tex.get_image())
+			return
 	var img := albedo.get_image()
 	if img == null:
 		return
@@ -131,6 +143,119 @@ func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
 			trunks.append(xf)
 	_collide(trunks, 0.42, 5.5)
 	_collide(rocks, 0.55, 1.1)
+
+
+func _card(tex: Texture2D, shader: Shader, crosses: int, half_w: float, height: float, sway: float) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for k in crosses:
+		var ang := PI * float(k) / float(crosses)
+		var dir := Vector3(cos(ang), 0.0, sin(ang))
+		var a := -dir * half_w
+		var b := dir * half_w
+		var top_a := a + Vector3(0.0, height, 0.0)
+		var top_b := b + Vector3(0.0, height, 0.0)
+		var verts: Array[Vector3] = [a, top_a, b, b, top_a, top_b]
+		# Godot's texture V is down the image, and the cards are painted tip-up.
+		var uvs: Array[Vector2] = [Vector2(0, 1), Vector2(0, 0), Vector2(1, 1), Vector2(1, 1), Vector2(0, 0), Vector2(1, 0)]
+		for i in verts.size():
+			st.set_uv(uvs[i])
+			st.add_vertex(verts[i])
+	st.generate_normals()
+	var mesh := st.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	mat.set_shader_parameter("crown", tex)
+	mat.set_shader_parameter("sway", sway)
+	mesh.surface_set_material(0, mat)
+	return mesh
+
+
+func _place_boreal(terrain: TerrainWorld, cover: Image) -> void:
+	var span := float(terrain.field.cols - 1) * terrain.field.spacing
+	var water := float(terrain.spec["water"]) if terrain.spec.get("water") != null else -9999.0
+	var spawn := Vector2(float(terrain.spec["spawn"][0]), float(terrain.spec["spawn"][1]))
+	var near_s: Array[Transform3D] = []
+	var near_f: Array[Transform3D] = []
+	var mid_s: Array[Transform3D] = []
+	var mid_f: Array[Transform3D] = []
+	var far_s: Array[Transform3D] = []
+	var far_f: Array[Transform3D] = []
+	var birch_near: Array[Transform3D] = []
+	var shrubs: Array[Transform3D] = []
+	var rocks: Array[Transform3D] = []
+	var width := cover.get_width()
+	var height := cover.get_height()
+	var step := 1
+	for y in range(0, height, step):
+		for x in range(0, width, step):
+			var px := cover.get_pixel(x, y)
+			var east := float(x) / float(width - 1) * span
+			var north := (1.0 - float(y) / float(height - 1)) * span
+			east += (_hash(x, y) - 0.5) * span / float(width) * float(step)
+			north += (_hash(x + 3, y + 1) - 0.5) * span / float(height) * float(step)
+			var dist := Vector2(east, north).distance_to(spawn)
+			if dist < 22.0:
+				continue
+			var tree := px.r
+			var shore := px.a
+			if shore > 0.5 and dist < 160.0 and rocks.size() < 70 and _hash(x + 2, y) > 0.78:
+				var rh := terrain.sample(east, north)
+				if rh > water + 0.4:
+					rocks.append(_xf(east, rh - 0.15, north, _hash(x, y + 4) * TAU, 0.45 + _hash(x + 6, y) * 1.1))
+			if dist < 90.0 and shrubs.size() < 420 and shore < 0.7 and (tree > 0.15 or px.b > 0.25) and _hash(x, y + 9) > 0.62:
+				var sh := terrain.sample(east, north)
+				if sh > water + 1.2:
+					shrubs.append(_xf(east, sh, north, _hash(x + 1, y) * TAU, 0.7 + _hash(x, y + 5) * 0.8))
+			if tree < 0.42 or shore > 0.55:
+				continue
+			if dist < 85.0 and near_s.size() + near_f.size() + birch_near.size() >= 340:
+				continue
+			if dist >= 85.0 and dist < 260.0 and mid_s.size() + mid_f.size() >= 1100:
+				continue
+			if dist >= 260.0 and far_s.size() + far_f.size() >= 2800:
+				continue
+			var hh := terrain.sample(east, north)
+			if hh < water + 1.5:
+				continue
+			# Cards are modelled at 16 m. Black spruce and balsam fir here run 10–20 m.
+			var tall := 0.62 + _hash(x + 5, y + 2) * 0.63
+			if px.g > 0.4:
+				tall *= 0.78
+			var yaw := _hash(x + 8, y) * TAU
+			var xf := _xf(east, hh - 0.25, north, yaw, tall)
+			var fir := _hash(x + 1, y + 4) > 0.8
+			if dist < 85.0:
+				if fir:
+					near_f.append(xf)
+				else:
+					near_s.append(xf)
+			elif dist < 260.0:
+				if fir:
+					mid_f.append(xf)
+				else:
+					mid_s.append(xf)
+			else:
+				if fir:
+					far_f.append(xf)
+				else:
+					far_s.append(xf)
+	_spawn(spruce_near, near_s, true, 0.0, 110.0)
+	_spawn(fir_near, near_f, true, 0.0, 110.0)
+	_spawn(birch_card, birch_near, true, 0.0, 140.0)
+	_spawn(spruce_far, mid_s, false, 70.0, 320.0)
+	_spawn(fir_far, mid_f, false, 70.0, 320.0)
+	_spawn(spruce_far, far_s, false, 240.0, 1500.0)
+	_spawn(fir_far, far_f, false, 240.0, 1500.0)
+	_spawn(shrub_card, shrubs, false, 0.0, 95.0)
+	for mesh in boulders:
+		_spawn(mesh, rocks, true, 0.0, 180.0)
+	var trunks: Array[Transform3D] = []
+	for item in near_s:
+		if trunks.size() < 36 and Vector2(item.origin.x, item.origin.z).distance_to(spawn) < 40.0:
+			trunks.append(item)
+	_collide(trunks, 0.35, 8.0)
+	print("boreal near ", near_s.size() + near_f.size(), " mid ", mid_s.size() + mid_f.size(), " far ", far_s.size() + far_f.size(), " shrubs ", shrubs.size())
 
 
 func _collide(items: Array[Transform3D], radius: float, height: float) -> void:

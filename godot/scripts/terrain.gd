@@ -280,6 +280,14 @@ func _bind_ground(span: float) -> void:
 	if spec["water"] != null:
 		water_y = float(spec["water"])
 	mat.set_shader_parameter("water_y", water_y)
+	var cover: Texture2D = null
+	if str(spec.get("id")) == "rene-levasseur":
+		cover = load("res://data/ile_cover.png")
+	if cover == null:
+		var blank := Image.create(2, 2, false, Image.FORMAT_RGBA8)
+		blank.fill(Color(0, 0, 0, 0))
+		cover = ImageTexture.create_from_image(blank)
+	mat.set_shader_parameter("cover_map", cover)
 	_sync_patch_uniforms()
 	fine_mat = mat.duplicate() as ShaderMaterial
 	fine_mat.set_shader_parameter("is_fine", 1.0)
@@ -617,24 +625,65 @@ func _build_water() -> void:
 	var span := float(field.cols - 1) * field.spacing
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var y := float(spec["water"]) + 0.45
-	# Wide enough that the horizon is water from the island's high ground.
-	var reach := 90000.0
-	var pts := [
-		Vector3(-reach, y, -reach),
-		Vector3(span + reach, y, -reach),
-		Vector3(-reach, y, span + reach),
-		Vector3(span + reach, y, span + reach),
-	]
-	for p in pts:
-		st.set_uv(Vector2(p.x / span, p.z / span))
-		st.add_vertex(p)
-	st.add_index(0)
-	st.add_index(2)
-	st.add_index(1)
-	st.add_index(1)
-	st.add_index(2)
-	st.add_index(3)
+	var y := float(spec["water"]) + 0.28
+	if str(spec.get("id")) == "rene-levasseur":
+		# Long reservoir swells need more than four corners. 32 m over the tile.
+		var step := 32.0
+		var n := int(span / step)
+		var count := (n + 1) * (n + 1)
+		var positions := PackedVector3Array()
+		var uvs := PackedVector2Array()
+		positions.resize(count)
+		uvs.resize(count)
+		for j in n + 1:
+			for i in n + 1:
+				var idx := j * (n + 1) + i
+				var x := float(i) * step
+				var z := float(j) * step
+				positions[idx] = Vector3(x, y, z)
+				uvs[idx] = Vector2(x / span, z / span)
+		var indices := PackedInt32Array()
+		indices.resize(n * n * 6)
+		var t := 0
+		for j in n:
+			for i in n:
+				var a := j * (n + 1) + i
+				var b := a + 1
+				var c := a + (n + 1)
+				var d := c + 1
+				indices[t] = a
+				indices[t + 1] = c
+				indices[t + 2] = b
+				indices[t + 3] = b
+				indices[t + 4] = c
+				indices[t + 5] = d
+				t += 6
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = positions
+		arrays[Mesh.ARRAY_TEX_UV] = uvs
+		arrays[Mesh.ARRAY_INDEX] = indices
+		var grid := ArrayMesh.new()
+		grid.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		st.create_from(grid, 0)
+	else:
+		# Wide enough that the horizon is water from the high ground.
+		var reach := 90000.0
+		var pts := [
+			Vector3(-reach, y, -reach),
+			Vector3(span + reach, y, -reach),
+			Vector3(-reach, y, span + reach),
+			Vector3(span + reach, y, span + reach),
+		]
+		for p in pts:
+			st.set_uv(Vector2(p.x / span, p.z / span))
+			st.add_vertex(p)
+		st.add_index(0)
+		st.add_index(2)
+		st.add_index(1)
+		st.add_index(1)
+		st.add_index(2)
+		st.add_index(3)
 	st.generate_normals()
 	water = MeshInstance3D.new()
 	water.mesh = st.commit()

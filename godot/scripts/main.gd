@@ -209,31 +209,31 @@ func _world() -> void:
 	sky_mat.mie_coefficient = 0.035
 	sky_mat.mie_eccentricity = 0.78
 	sky_mat.ground_color = Color(0.14, 0.18, 0.14)
-	sky_mat.energy_multiplier = 0.72
-	sky_mat.mie_coefficient = 0.06
-	sky_mat.turbidity = 10.0
+	sky_mat.energy_multiplier = 0.82
+	sky_mat.mie_coefficient = 0.045
+	sky_mat.turbidity = 7.0
 	sky.sky_material = sky_mat
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 0.7
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 0.68
+	env.tonemap_exposure = 0.84
 	env.fog_enabled = true
 	env.fog_mode = Environment.FOG_MODE_EXPONENTIAL
-	env.fog_density = 0.00026
-	env.fog_aerial_perspective = 0.55
-	env.fog_light_color = Color(0.68, 0.74, 0.78)
-	env.fog_sun_scatter = 0.08
+	env.fog_density = 0.00012
+	env.fog_aerial_perspective = 0.35
+	env.fog_light_color = Color(0.70, 0.76, 0.8)
+	env.fog_sun_scatter = 0.04
+	# Thicker near the reservoir surface, thinner on the bench.
+	env.fog_height = 348.0
+	env.fog_height_density = 0.006
 	if RenderingServer.get_current_rendering_method() == "forward_plus":
 		env.ssao_enabled = true
-		env.ssao_radius = 2.2
-		env.ssao_intensity = 1.6
-		env.ssil_enabled = true
-		env.sdfgi_enabled = true
-		env.sdfgi_cascades = 4
-		env.sdfgi_min_cell_size = 0.4
-		env.sdfgi_use_occlusion = true
+		env.ssao_radius = 1.1
+		env.ssao_intensity = 0.7
+		env.ssil_enabled = false
+		env.sdfgi_enabled = false
 		env.volumetric_fog_enabled = false
 	world = env
 	var world_env := WorldEnvironment.new()
@@ -245,12 +245,13 @@ func _world() -> void:
 	sun.light_color = Color(1.0, 0.96, 0.88)
 	var fill := DirectionalLight3D.new()
 	fill.rotation_degrees = Vector3(-24.0, -150.0, 0.0)
-	fill.light_energy = 0.46
+	fill.light_energy = 0.22
+	fill.light_color = Color(0.75, 0.82, 0.92)
 	fill.shadow_enabled = false
 	add_child(fill)
 	sun.shadow_enabled = true
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 260.0
+	sun.directional_shadow_max_distance = 140.0
 	sun.directional_shadow_split_1 = 0.08
 	sun.directional_shadow_split_2 = 0.22
 	sun.directional_shadow_split_3 = 0.5
@@ -324,9 +325,10 @@ func _tune_site() -> void:
 func _place_sun() -> void:
 	if sun == null or terrain == null or terrain.spec.is_empty():
 		return
-	var lat := float(terrain.spec["lat"]) if terrain.spec.has("lat") else 51.4
-	# Mid-November solar declination. Noon elevation = 90° − latitude + declination.
-	var elevation := clampf(90.0 - lat + -18.4, 6.0, 48.0)
+	var lat := float(terrain.spec["lat"]) if terrain.spec.has("lat") else 51.43
+	# 16 November, Spencer declination. Noon elevation = 90° − latitude + declination.
+	var decl := 23.45 * sin(deg_to_rad(360.0 / 365.0 * (284.0 + 320.0)))
+	var elevation := clampf(90.0 - lat + decl, 6.0, 48.0)
 	# +Z is north in these tiles, and a DirectionalLight shines along -Z, so yaw 180
 	# sends the November sun from the south.
 	sun.rotation_degrees = Vector3(-elevation, 180.0, 0.0)
@@ -730,29 +732,13 @@ func _mark_map() -> void:
 
 func _frame_reservoir() -> void:
 	var origin := vehicle.global_position
-	var water := float(terrain.spec["water"]) if terrain.spec.get("water") != null else -9999.0
-	var stand := origin
-	var aim := Vector3(1.0, 0.0, 0.0)
-	for step in [28.0, 48.0, 70.0]:
-		for k in 24:
-			var ang := TAU * float(k) / 24.0
-			var dir := Vector3(cos(ang), 0.0, sin(ang))
-			var p: Vector3 = origin + dir * step
-			var h := terrain.sample(p.x, p.z)
-			if h < water + 2.5:
-				continue
-			var far_at: Vector3 = p + dir * 55.0
-			if terrain.sample(far_at.x, far_at.z) > water + 0.6:
-				continue
-			stand = Vector3(p.x, h + 2.6, p.z)
-			aim = dir
-			break
-		if stand != origin:
-			break
+	# The reservoir is west of this bench. Look that way, from just above the moss.
+	var aim := Vector3(-0.92, 0.0, 0.28)
 	vehicle.visible = false
 	camera.hold = true
-	camera.camera.global_position = stand
-	camera.camera.look_at(stand + aim * 90.0 + Vector3(0.0, 1.4, 0.0), Vector3.UP)
+	var eye := terrain.sample(origin.x, origin.z) + 3.4
+	camera.camera.global_position = Vector3(origin.x, eye, origin.z) - aim * 4.0
+	camera.camera.look_at(origin + aim * 90.0 + Vector3(0.0, 1.2, 0.0), Vector3.UP)
 
 
 func _frame_spawn_shot() -> void:

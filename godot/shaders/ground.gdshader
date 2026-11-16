@@ -14,6 +14,7 @@ uniform sampler2D mud_alb : source_color, filter_linear_mipmap_anisotropic, repe
 uniform sampler2D mud_nrm : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D disturb_map : filter_linear, repeat_disable;
 uniform sampler2D fine_cut : filter_linear, repeat_disable;
+uniform sampler2D cover_map : filter_linear, repeat_disable;
 uniform vec2 height_range = vec2(0.0, 1.0);
 uniform vec2 tile_m = vec2(3998.0, 3998.0);
 uniform float forest = 0.0;
@@ -47,6 +48,12 @@ vec3 stochastic(sampler2D tex, vec2 uv) {
 	vec3 c01 = texture(tex, base + o01).rgb;
 	vec3 c11 = texture(tex, base + o11).rgb;
 	return mix(mix(c00, c10, sm.x), mix(c01, c11, sm.x), sm.y);
+}
+
+vec3 once(sampler2D tex, vec2 uv) {
+	vec2 cell = floor(uv);
+	vec2 o = vec2(hash12(cell), hash12(cell + vec2(9.0, 2.0)));
+	return texture(tex, uv * 0.41 + o).rgb;
 }
 
 vec3 triplanar_color(sampler2D tex, vec3 p, vec3 n, float scale) {
@@ -96,34 +103,38 @@ void fragment() {
 	// The photograph is the surface. Detail textures only break it up.
 	vec3 alb = mix(detail, sat, 0.72);
 	alb = alb / (1.0 + max(alb - vec3(0.7), vec3(0.0)) * 1.2);
-	if (forest > 0.5) {
-		float canopy = clamp((sat.g - max(sat.r, sat.b)) * 5.0, 0.0, 1.0);
-		float sat_max = max(sat.r, max(sat.g, sat.b));
-		float sat_min = min(sat.r, min(sat.g, sat.b));
-		float chroma = sat_max - sat_min;
-		// Pale, low-chroma ground on the shield is lichen and bare rock, not lawn.
-		float lichen = (1.0 - smoothstep(0.035, 0.14, chroma)) * smoothstep(0.16, 0.42, sat_l);
-		float wetland = smoothstep(0.015, 0.1, sat.b - sat.r) * (1.0 - canopy) * (1.0 - smoothstep(0.05, 0.3, slope));
-		float shore_w = 0.0;
-		if (water_y > -100.0) {
-			shore_w = 1.0 - smoothstep(0.0, 1.6, world_pos.y - water_y);
+	vec4 cover = texture(cover_map, uv);
+	float cover_sum = cover.r + cover.g + cover.b + cover.a;
+	if (forest > 0.5 && cover_sum > 0.04) {
+		// NRCan classes, feathered: moss under needleleaf, lichen and granite on
+		// openings and steep shield, peat in wetlands, gravel on the reservoir shore.
+		vec3 moss = stochastic(forest_alb, world_pos.xz * 0.24);
+		vec3 lichen_c = stochastic(leaves_alb, world_pos.xz * 0.16);
+		vec3 granite = once(rock_alb, world_pos.xz * 0.11);
+		vec3 stones = once(gravel_alb, world_pos.xz * 0.2);
+		vec3 peat = once(mud_alb, world_pos.xz * 0.13);
+		vec3 burn = once(shore_alb, world_pos.xz * 0.09);
+		float rock_w = clamp(cover.g + smoothstep(0.3, 0.62, slope), 0.0, 1.0);
+		detail = mix(moss, mix(lichen_c, granite, smoothstep(0.12, 0.5, slope)), rock_w);
+		detail = mix(detail, peat, cover.b);
+		detail = mix(detail, stones, cover.a * (1.0 - slope));
+		float burn_w = smoothstep(0.16, 0.045, sat_l) * (1.0 - cover.a) * (1.0 - cover.b) * step(0.25, cover.r);
+		detail = mix(detail, burn, burn_w * 0.8);
+		float macro = once(forest_alb, world_pos.xz * 0.035).g;
+		float broad = once(rock_alb, world_pos.xz * 0.008).g;
+		detail *= 0.7 + macro * 0.45;
+		detail = mix(detail, detail * vec3(0.78, 0.84, 0.7), broad * 0.65);
+		float open = max(rock_w, cover.a);
+		alb = mix(detail, sat, mix(0.06, 0.28, open));
+		if (detail_fade > 0.15) {
+			vec3 ntex = once(forest_nrm, world_pos.xz * 0.24) * 2.0 - 1.0;
+			vec3 rtex = once(rock_nrm, world_pos.xz * 0.11) * 2.0 - 1.0;
+			ntex = mix(ntex, rtex, rock_w);
+			nrm = normalize(nrm + vec3(ntex.x, ntex.z * 0.15, ntex.y) * (0.65 + rock_w) * detail_fade);
 		}
-		vec3 moss = stochastic(forest_alb, world_pos.xz * 0.18);
-		moss = mix(moss, vec3(0.09, 0.16, 0.07), 0.4);
-		vec3 lichen_c = mix(rock, vec3(0.48, 0.46, 0.36), 0.4);
-		vec3 bog = vec3(0.07, 0.1, 0.06);
-		vec3 gravel_shore = mix(mix(gravel, rock, 0.45), vec3(0.34, 0.32, 0.28), 0.35);
-		detail = mix(moss, lichen_c, clamp(lichen + smoothstep(0.25, 0.6, slope), 0.0, 1.0));
-		detail = mix(detail, bog, wetland * 0.7);
-		detail = mix(detail, gravel_shore, shore_w * (1.0 - slope));
-		float lawn = smoothstep(0.28, 0.62, sat.g) * (1.0 - canopy);
-		float sat_w = mix(0.34 + canopy * 0.3, 0.16, max(lawn, shore_w));
-		alb = mix(detail, sat, sat_w);
-		float bump = texture(forest_alb, world_pos.xz * 0.14).g;
-		float bump_x = texture(forest_alb, world_pos.xz * 0.14 + vec2(0.03, 0.0)).g;
-		float bump_z = texture(forest_alb, world_pos.xz * 0.14 + vec2(0.0, 0.03)).g;
-		vec3 bumped = normalize(nrm + vec3((bump - bump_x) * 1.6, 0.0, (bump - bump_z) * 1.6));
-		NORMAL = normalize((VIEW_MATRIX * vec4(bumped, 0.0)).xyz);
+	} else if (forest > 0.5) {
+		detail = mix(stochastic(forest_alb, world_pos.xz * 0.2), rock, smoothstep(0.25, 0.55, slope));
+		alb = mix(detail, sat, 0.35);
 	}
 	float wet = 0.0;
 	if (water_y > -100.0) {
@@ -151,13 +162,11 @@ void fragment() {
 	SPECULAR = mix(0.02, 0.05, wet);
 	METALLIC = 0.0;
 
-	vec3 n = nrm;
 	float crumb = hash12(floor(world_pos.xz * 8.0)) - 0.5;
 	float crumb2 = hash12(floor(world_pos.xz * 8.0 + vec2(4.0, 1.0))) - 0.5;
-	n += vec3(crumb, 0.0, crumb2) * cut * 0.07;
-	// A groove across each track so the print catches the light.
+	nrm += vec3(crumb, 0.0, crumb2) * cut * 0.07;
 	float groove = sin(dot(world_pos.xz, normalize(vec2(nrm.z, -nrm.x) + vec2(0.001))) * 14.0);
-	n += vec3(groove, 0.0, 0.0) * tracks * 0.2;
-	n.y = max(n.y, 0.35);
-	NORMAL = normalize((VIEW_MATRIX * vec4(normalize(n), 0.0)).xyz);
+	nrm += vec3(groove, 0.0, 0.0) * tracks * 0.2;
+	nrm.y = max(nrm.y, 0.35);
+	NORMAL = normalize((VIEW_MATRIX * vec4(normalize(nrm), 0.0)).xyz);
 }

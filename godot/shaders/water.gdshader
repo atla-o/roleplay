@@ -45,7 +45,12 @@ float bed_near(vec2 uv, float center) {
 }
 
 void vertex() {
-	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec3 p = VERTEX;
+	float swell = sin(p.x * 0.028 + TIME * 0.5) * 0.1 + sin(p.z * 0.016 - TIME * 0.33) * 0.07;
+	float local = 1.0 - smoothstep(2200.0, 5200.0, length(p.xz));
+	p.y += swell * local;
+	VERTEX = p;
+	world_pos = (MODEL_MATRIX * vec4(p, 1.0)).xyz;
 }
 
 void fragment() {
@@ -71,21 +76,26 @@ void fragment() {
 	float w2 = sin(world_pos.z * 0.035 - TIME * 0.18);
 	vec3 wn = normalize(vec3(-w1 * 0.008, 1.0, -w2 * 0.008));
 
-	vec3 shallow = vec3(0.07, 0.28, 0.38);
-	vec3 deep = vec3(0.035, 0.16, 0.32);
-	vec3 water = mix(shallow, deep, smoothstep(0.15, 3.5, shown));
+	vec3 shallow = vec3(0.16, 0.28, 0.28);
+	vec3 deep = vec3(0.05, 0.12, 0.16);
+	vec3 water = mix(shallow, deep, smoothstep(0.2, 4.0, shown));
 
 	vec3 view_w = normalize(CAMERA_POSITION_WORLD - world_pos);
 	vec3 refl = reflect(-view_w, wn);
 	float sky_h = clamp(refl.y * 1.05, 0.0, 1.0);
-	vec3 sky = mix(vec3(0.5, 0.64, 0.74), vec3(0.14, 0.34, 0.6), sky_h);
-	float fres = pow(1.0 - clamp(dot(view_w, wn), 0.0, 1.0), 2.8);
-	vec3 color = mix(water, sky, fres * 0.28 + 0.04);
+	vec3 sky = mix(vec3(0.62, 0.68, 0.72), vec3(0.28, 0.38, 0.46), sky_h);
+	float fres = pow(1.0 - clamp(dot(view_w, wn), 0.0, 1.0), 3.2);
+	vec3 color = mix(water, sky, fres * 0.55 + 0.04);
+	if (use_ssr > 0.5) {
+		vec3 mirror = texture(screen_tex, SCREEN_UV + wn.xz * 0.015).rgb;
+		color = mix(color, mirror, fres * 0.28);
+	}
 
-	float foam = (1.0 - smoothstep(0.0, 2.4, depth)) * (1.0 - smoothstep(0.15, 1.15, sheet));
-	float lip = smoothstep(0.0, 0.18, depth) * (1.0 - smoothstep(0.18, 0.85, depth));
-	color = mix(color, vec3(0.62, 0.74, 0.72), foam * 0.55);
-	color = mix(color, vec3(0.82, 0.88, 0.86), lip * 0.7);
+	float foam = (1.0 - smoothstep(0.0, 1.8, depth)) * (1.0 - smoothstep(0.1, 0.9, sheet));
+	float lip = smoothstep(0.0, 0.12, depth) * (1.0 - smoothstep(0.12, 0.7, depth));
+	float broken = step(0.42, hash21(floor(world_pos.xz * 0.35)));
+	color = mix(color, vec3(0.55, 0.62, 0.6), foam * 0.35 * broken);
+	color = mix(color, vec3(0.78, 0.82, 0.8), lip * 0.65);
 
 	float ndot = clamp(dot(refl, normalize(sun_dir)), 0.0, 1.0);
 	float spark = step(0.96, hash21(floor(world_pos.xz * 2.5)));
@@ -93,7 +103,7 @@ void fragment() {
 
 	ALBEDO = color;
 	EMISSION = vec3(1.0, 0.98, 0.92) * glint * 0.25;
-	ROUGHNESS = 0.94;
+	ROUGHNESS = mix(0.18, 0.55, foam);
 	SPECULAR = 0.0;
 	METALLIC = 0.0;
 	ALPHA = cover;

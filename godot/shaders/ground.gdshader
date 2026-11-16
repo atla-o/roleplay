@@ -92,9 +92,9 @@ void fragment() {
 	vec3 shore = stochastic(shore_alb, world_pos.xz * 0.1);
 
 	vec3 detail = mix(gravel, rock, smoothstep(0.22, 0.55, slope) * detail_fade);
-	// Cool the orange sand so the plain reads as gravel, not a dune.
-	detail = mix(detail, detail * vec3(0.78, 0.84, 0.88), 0.45);
-	vec3 alb = mix(detail, sat, mix(0.08, 0.22, detail_fade));
+	detail = mix(detail, detail * vec3(0.72, 0.78, 0.74), 0.35);
+	// The photograph is the surface. Detail textures only break it up.
+	vec3 alb = mix(detail, sat, 0.72);
 	alb = alb / (1.0 + max(alb - vec3(0.7), vec3(0.0)) * 1.2);
 	if (forest > 0.5) {
 		float canopy = clamp((sat.g - max(sat.r, sat.b)) * 4.0, 0.0, 1.0);
@@ -103,12 +103,12 @@ void fragment() {
 		if (water_y > -100.0) {
 			shore_w = 1.0 - smoothstep(0.05, 3.2, world_pos.y - water_y);
 		}
-		detail = mix(detail, shore, shore_w * (1.0 - slope));
-		alb = mix(detail, sat, 0.12 + canopy * 0.16);
-		alb *= 1.15 + sat_l * 0.2;
-		vec3 moss = vec3(0.13, 0.24, 0.12);
+		detail = mix(detail, shore, shore_w * (1.0 - slope) * 0.45);
+		alb = mix(detail, sat, 0.62 + canopy * 0.18);
+		alb *= 1.05 + sat_l * 0.12;
+		vec3 moss = vec3(0.16, 0.28, 0.14);
 		float moss_w = canopy * (1.0 - smoothstep(0.08, 0.4, slope));
-		alb = mix(alb, moss, moss_w * 0.62);
+		alb = mix(alb, moss, moss_w * 0.22);
 	}
 	float wet = 0.0;
 	if (water_y > -100.0) {
@@ -126,11 +126,11 @@ void fragment() {
 		cut = max(cut, fine.r);
 		tracks = fine.g;
 	}
-	// Fresh spoil is lighter and rougher than the crust it came out of.
-	vec3 spoil = texture(mud_alb, world_pos.xz * 0.12).rgb;
-	spoil = mix(spoil, vec3(0.8, 0.68, 0.5), 0.78);
-	alb = mix(alb, spoil, smoothstep(0.25, 0.9, cut) * 0.72);
-	alb = mix(alb, alb * vec3(0.62, 0.58, 0.5), tracks * 0.7);
+	// Exposed ground is the local photo, darkened toward till and gravel, not a sand fill.
+	vec3 spoil = mix(sat, vec3(0.22, 0.2, 0.16), 0.45);
+	spoil = mix(spoil, texture(mud_alb, world_pos.xz * 0.08).rgb, 0.25);
+	alb = mix(alb, spoil, smoothstep(0.4, 0.95, cut) * 0.5);
+	alb = mix(alb, alb * vec3(0.55, 0.52, 0.46), tracks * 0.4);
 	ALBEDO = alb;
 	ROUGHNESS = mix(0.96, 0.78, wet);
 	SPECULAR = mix(0.02, 0.05, wet);

@@ -32,6 +32,8 @@ var search_box: LineEdit
 var recent_box: VBoxContainer
 var recent: Array = []
 var map_test := false
+var teleport_test := false
+var manipulate_label: Label
 
 func _ready() -> void:
 	DisplayServer.window_set_title("Roleplay")
@@ -54,10 +56,13 @@ func _ready() -> void:
 	_load_sites()
 	_ui()
 	_activate("robot")
-	vehicle.blade_angle = -0.5
+	vehicle.set_manipulate(false)
 	DisplayServer.window_set_title("Roleplay")
 	if map_test:
 		_run_map_test()
+		return
+	if teleport_test:
+		_run_teleport_test()
 		return
 	if shot_dir != "":
 		_shots()
@@ -77,6 +82,10 @@ func _process(dt: float) -> void:
 	if fps_time > 2.0:
 		fps_time = 0.0
 		print("fps ", Engine.get_frames_per_second())
+	if manipulate_label and manipulate_label.visible:
+		manipulate_label.modulate.a = move_toward(manipulate_label.modulate.a, 0.0, dt * 0.45)
+		if manipulate_label.modulate.a <= 0.02:
+			manipulate_label.visible = false
 	if active:
 		terrain.focus = active.global_position
 	if terrain and terrain.persist:
@@ -140,10 +149,12 @@ func _process(dt: float) -> void:
 	if kind == "robot":
 		vehicle.throttle = clampf(throttle, -1.0, 1.0)
 		vehicle.steer = clampf(steer, -1.0, 1.0)
+		if not vehicle.manipulate:
+			vehicle.blade_angle = 0.4
 		var rate := 0.8 * dt
-		if raise:
+		if vehicle.manipulate and raise:
 			vehicle.blade_angle = minf(0.45, vehicle.blade_angle + rate)
-		if lower:
+		if vehicle.manipulate and lower:
 			vehicle.blade_angle = maxf(-0.65, vehicle.blade_angle - rate)
 		if Input.is_key_pressed(KEY_Z):
 			vehicle.blade_tilt = maxf(-0.28, vehicle.blade_tilt - rate)
@@ -161,6 +172,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		_toggle_menu()
 		get_viewport().set_input_as_handled()
 		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F and (panel == null or not panel.visible):
+		vehicle.set_manipulate(not vehicle.manipulate)
+		_flash_manipulate()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventMouseButton and event.pressed and (panel == null or not panel.visible):
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			camera.distance = clampf(camera.distance / 1.12, 8.0, 42.0)
+			get_viewport().set_input_as_handled()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			camera.distance = clampf(camera.distance * 1.12, 8.0, 42.0)
+			get_viewport().set_input_as_handled()
 	if event is InputEventKey and event.pressed and not event.echo and panel and panel.visible:
 		var key := event as InputEventKey
 		if key.keycode == KEY_ENTER or key.keycode == KEY_KP_ENTER:
@@ -266,7 +289,8 @@ func _open_site(index: int, at: Vector2 = Vector2(-1.0e9, -1.0e9)) -> void:
 		sx = landed.x
 		sz = landed.y
 	_place(vehicle, sx, sz, yaw_v)
-	vehicle.blade_angle = -0.5
+	if not vehicle.manipulate:
+		vehicle.blade_angle = 0.4
 	vehicle.linear_velocity = Vector3.ZERO
 	vehicle.angular_velocity = Vector3.ZERO
 	_place(human, sx + 14.0, sz - 10.0, yaw_v)
@@ -274,6 +298,8 @@ func _open_site(index: int, at: Vector2 = Vector2(-1.0e9, -1.0e9)) -> void:
 		_place(human, sx, sz, yaw_v)
 		_place(vehicle, sx + 14.0, sz - 10.0, yaw_v)
 	terrain.focus = active.global_position if active else vehicle.global_position
+	if camera.camera:
+		camera.camera.far = 14000.0
 	_tune_site()
 	print("site ", spec["name"], " cut ", terrain.field.cut_m3, " fill ", terrain.field.fill_m3)
 
@@ -426,6 +452,16 @@ func _ui() -> void:
 	map_col.add_child(north_map)
 	_load_recent()
 	_mark_map()
+	manipulate_label = Label.new()
+	manipulate_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	manipulate_label.offset_top = 28.0
+	manipulate_label.offset_bottom = 64.0
+	manipulate_label.offset_left = -120.0
+	manipulate_label.offset_right = 120.0
+	manipulate_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	manipulate_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	manipulate_label.visible = false
+	ui.add_child(manipulate_label)
 	menu_root.add_child(panel)
 
 
@@ -496,7 +532,10 @@ func _teleport_pin() -> void:
 	foliage.rebuild(terrain, terrain.color_tex)
 	var yaw_v := 0.0
 	_place(vehicle, float(landed["x"]), float(landed["z"]), yaw_v)
-	vehicle.blade_angle = -0.5
+	if camera.camera:
+		camera.camera.far = 280000.0 if float(terrain.spec["spacing"]) > 100.0 else 14000.0
+	if not vehicle.manipulate:
+		vehicle.blade_angle = 0.4
 	vehicle.linear_velocity = Vector3.ZERO
 	vehicle.angular_velocity = Vector3.ZERO
 	_place(human, float(landed["x"]) + 14.0, float(landed["z"]) - 10.0, yaw_v)
@@ -608,7 +647,7 @@ func _run_map_test() -> void:
 	var far_id := str(terrain.spec.get("id"))
 	var far_h := terrain.sample(active.global_position.x, active.global_position.z)
 	print("lowres-pin ", far_id, " ", active.global_position, " h ", far_h)
-	var ok := island_id == "rene-levasseur" and europe_id == "northern-2" and far_id.begins_with("north-") and island_h > 300.0 and far_h > 1.5
+	var ok := island_id == "rene-levasseur" and europe_id == "northern-2" and far_id.begins_with("north-") and island_h > 300.0 and far_h > 1.5 and absf(active.global_position.x) < 5000.0
 	print("map-test ", "ok" if ok else "FAIL")
 	get_tree().quit(0 if ok else 1)
 
@@ -696,6 +735,8 @@ func _read_args() -> void:
 			dig_test = true
 		if arg == "--map-test":
 			map_test = true
+		if arg == "--teleport-test":
+			teleport_test = true
 	if OS.get_environment("ROLEPLAY_CAPTURE") == "1":
 		capture = true
 	if OS.has_feature("web"):
@@ -802,8 +843,55 @@ func _shots() -> void:
 	get_tree().quit()
 
 
+func _run_teleport_test() -> void:
+	var points: Array[Vector2] = [
+		Vector2(78.04862, 13.6441),
+		Vector2(70.49304, 67.91264),
+		Vector2(58.1, -68.4),
+		Vector2(53.3, -70.2),
+		Vector2(64.15, -21.9),
+		Vector2(69.65, 18.96),
+		Vector2(71.29, -156.79),
+		Vector2(60.72, -135.05),
+		Vector2(68.97, 33.09),
+		Vector2(51.05, -114.08),
+		Vector2(46.8, -71.2),
+		Vector2(74.0, -90.0),
+		Vector2(80.0, 20.0),
+	]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 42
+	for _i in 10:
+		points.append(Vector2(rng.randf_range(46.0, 78.0), rng.randf_range(-170.0, 170.0)))
+	var failed := 0
+	for p in points:
+		north_map.drop_latlon(p.x, p.y)
+		_teleport_pin()
+		var h := terrain.sample(active.global_position.x, active.global_position.z)
+		var finite := not is_nan(h) and not is_inf(h)
+		var near := absf(active.global_position.x) < 8000.0 and absf(active.global_position.z) < 8000.0
+		var sane := h > -200.0 and h < 6500.0
+		var grounded := absf(active.global_position.y - h) < 8.0
+		if not finite or not near or not sane or not grounded or terrain.field == null:
+			failed += 1
+			print("teleport FAIL ", p, " h ", h, " at ", active.global_position, " id ", terrain.spec.get("id"))
+		else:
+			print("teleport ok ", p, " h ", snapped(h, 0.1), " ", terrain.spec.get("id"))
+	print("teleport-test ", points.size(), " failed ", failed)
+	get_tree().quit(0 if failed == 0 else 1)
+
+
+func _flash_manipulate() -> void:
+	if manipulate_label == null:
+		return
+	manipulate_label.text = "Blade down" if vehicle.manipulate else "Blade up"
+	manipulate_label.modulate.a = 1.0
+	manipulate_label.visible = true
+
+
 func _run_dig_test() -> void:
 	vehicle.freeze = false
+	vehicle.set_manipulate(true)
 	vehicle.blade_angle = -0.55
 	vehicle.throttle = 1.0
 	vehicle.steer = 0.0

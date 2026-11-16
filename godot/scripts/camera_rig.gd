@@ -72,11 +72,11 @@ func configure(kind: String) -> void:
 	_placed = false
 	match kind:
 		"robot":
-			distance = 11.5
-			look_ahead = 4.8
-			look_height = 1.5
-			pitch_up = 0.42
-			camera.fov = 52.0
+			distance = 20.0
+			look_ahead = 7.5
+			look_height = 2.2
+			pitch_up = 0.36
+			camera.fov = 50.0
 			camera.near = 0.25
 		"human":
 			distance = 5.2

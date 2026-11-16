@@ -4,7 +4,8 @@ extends RigidBody3D
 var terrain: TerrainWorld
 var throttle := 0.0
 var steer := 0.0
-var blade_angle := 0.28
+var blade_angle := 0.4
+var manipulate := false
 var blade_tilt := 0.0
 var tilt_node: Node3D
 var blade_node: Node3D
@@ -104,6 +105,11 @@ func _physics_process(dt: float) -> void:
 		linear_velocity -= fwd * (speed - signf(speed) * 4.2) * 0.35
 	_pose_blade()
 	_scroll_tracks(speed, dt)
+	if not manipulate:
+		if dust:
+			dust.emitting = false
+		_hold_shore()
+		return
 	if absf(speed) > 0.3:
 		track_travel += absf(speed) * dt
 		if track_travel > 0.2:
@@ -122,6 +128,12 @@ func _physics_process(dt: float) -> void:
 	elif dust:
 		dust.emitting = false
 	_hold_shore()
+
+
+func set_manipulate(on: bool) -> void:
+	manipulate = on
+	blade_angle = -0.5 if on else 0.4
+	_pose_blade()
 
 
 func _hold_shore() -> void:

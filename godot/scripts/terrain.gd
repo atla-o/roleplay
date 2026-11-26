@@ -2,6 +2,8 @@ class_name TerrainWorld
 extends Node3D
 
 const _Tiles = preload("res://scripts/tile_stream.gd")
+const _Quad = preload("res://scripts/quad_stream.gd")
+const _Shore = preload("res://scripts/shore.gd")
 
 const CHUNK := 32
 
@@ -43,8 +45,17 @@ var site_id := ""
 var view_origin := Vector2.ZERO
 var imagery_zoom := 8
 var stream_radius := 1
+var detail_cap := 13
+var streaming := false
+var quad: QuadStream
 const WINDOW := 97
 const COL_SPACING := 0.5
+
+func _ready() -> void:
+	quad = _Quad.new()
+	quad.name = "QuadStream"
+	add_child(quad)
+
 
 func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
 	var bytes := FileAccess.get_file_as_bytes("res://data/%s" % next_spec["heights"])
@@ -53,6 +64,9 @@ func setup(next_spec: Dictionary, albedo: Texture2D, grain: Texture2D) -> void:
 
 
 func setup_heights(next_spec: Dictionary, heights: PackedFloat32Array, albedo: Texture2D, grain: Texture2D) -> void:
+	streaming = false
+	if quad != null:
+		quad.shutdown()
 	spec = next_spec
 	color_tex = albedo
 	grain_tex = grain
@@ -167,38 +181,64 @@ func open_north(meta: Dictionary, lat: float, lon: float, grain: Texture2D) -> D
 	return {"x": 0.0, "z": 0.0, "lat": ll.x, "lon": ll.y}
 
 
-## Streamed web-mercator ground. Returns empty if a tile cannot be fetched,
-## so the caller can fall back without crashing.
-func open_stream(lat: float, lon: float, grain: Texture2D) -> Dictionary:
-	var zoom := clampi(imagery_zoom, 5, 11)
-	var patch: Dictionary = _Tiles.fetch_patch(lat, lon, zoom, stream_radius)
-	if patch.is_empty():
-		return {}
-	var posts := int(patch["posts"])
-	var tile_m := float(patch["tile_m"])
-	var step := tile_m / 128.0
-	var frac: Vector2 = _Tiles.fraction(lat, lon, zoom)
-	var field_x := tile_m * (float(stream_radius) + frac.x)
-	var field_z := tile_m * (float(stream_radius) + 1.0 - frac.y)
+## Start a streamed window without waiting on the network. The caller keeps
+## the loading fade up until stream_ready() or the anchor tile fails.
+func open_stream(lat: float, lon: float, _grain: Texture2D) -> Dictionary:
+	return begin_stream(lat, lon)
+
+
+func begin_stream(lat: float, lon: float) -> Dictionary:
+	if quad == null:
+		quad = _Quad.new()
+		quad.name = "QuadStream"
+		add_child(quad)
+	_clear()
+	view_origin = Vector2.ZERO
+	streaming = true
 	var spec_n := {
-		"id": "stream-%d-%d-%d" % [zoom, int(patch["center"].x), int(patch["center"].y)],
+		"id": "stream-%.4f-%.4f" % [lat, lon],
 		"name": "North",
-		"cols": posts,
-		"rows": posts,
-		"spacing": step,
-		"hmin": float(patch["hmin"]),
-		"hmax": maxf(float(patch["hmax"]), float(patch["hmin"]) + 1.0),
+		"cols": 4,
+		"rows": 4,
+		"spacing": 32.0,
+		"hmin": -400.0,
+		"hmax": 2200.0,
 		"repose": 34.0,
-		"water": 0.0,
+		"water": null,
 		"forest": false,
 		"lat": lat,
 		"spawn": [0.0, 0.0],
-		"view_origin": [field_x, field_z],
+		"view_origin": [0.0, 0.0],
 		"diggable": false,
 	}
-	var albedo := ImageTexture.create_from_image(patch["image"])
-	setup_heights(spec_n, patch["heights"], albedo, grain)
+	spec = spec_n
+	field = Soil.Field.new()
+	field.cols = 4
+	field.rows = 4
+	field.spacing = 32.0
+	field.heights = PackedFloat32Array()
+	field.heights.resize(16)
+	field.disturb = PackedByteArray()
+	field.disturb.resize(16)
+	field.changed = PackedInt32Array()
+	baseline = field.heights.duplicate()
+	quad.start(lat, lon, detail_cap)
 	return {"x": 0.0, "z": 0.0, "lat": lat, "lon": lon}
+
+
+func stream_ready(x: float, z: float) -> bool:
+	return streaming and quad != null and quad.has_visual(x, z)
+
+
+func stream_failed() -> bool:
+	return quad != null and quad.anchor_failed
+
+
+func tick_stream(focus_pos: Vector3, cam_pos: Vector3, fov: float, view_h: float) -> Vector3:
+	focus = focus_pos
+	if not streaming or quad == null:
+		return Vector3.ZERO
+	return quad.tick(focus_pos, cam_pos, fov, view_h, detail_cap)
 
 
 func _nearest_land(full: PackedFloat32Array, posts: int, col: int, row: int) -> Vector2i:
@@ -218,6 +258,12 @@ func _nearest_land(full: PackedFloat32Array, posts: int, col: int, row: int) -> 
 
 
 func sample(x: float, z: float) -> float:
+	if streaming and quad != null:
+		var streamed := quad.height_at(x, z)
+		if streamed > -12000.0:
+			return streamed
+	if field == null:
+		return 0.0
 	return _sample_field(x + view_origin.x, z + view_origin.y)
 
 
@@ -481,6 +527,8 @@ func refresh_edits() -> void:
 
 
 func _process(_dt: float) -> void:
+	if streaming:
+		return
 	_stream(focus)
 	_update_collision(focus)
 	if ring != null and ring_near_at.distance_to(Vector2(focus.x, focus.z)) > 700.0:
@@ -518,7 +566,7 @@ func _clear() -> void:
 
 
 func save_edits() -> void:
-	if not persist or baseline.is_empty() or field == null:
+	if streaming or not persist or baseline.is_empty() or field == null:
 		return
 	if patch and patch.live:
 		patch.bake()
@@ -628,7 +676,7 @@ func _build_collision() -> void:
 
 
 func _update_collision(focus_pos: Vector3) -> void:
-	if shape == null:
+	if streaming or ground == null or shape == null or field == null:
 		return
 	focus_pos = Vector3(focus_pos.x + view_origin.x, focus_pos.y, focus_pos.z + view_origin.y)
 	var span := float(WINDOW - 1) * COL_SPACING
@@ -734,9 +782,24 @@ func _build_water() -> void:
 	wmat.set_shader_parameter("tile_origin", Vector2.ZERO)
 	wmat.set_shader_parameter("use_ssr", 1.0 if RenderingServer.get_current_rendering_method() == "forward_plus" else 0.0)
 	wmat.set_shader_parameter("sun_dir", Vector3(0.55, 0.38, 0.74))
+	_attach_shore(wmat)
 	water.material_override = wmat
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(water)
+
+
+func _attach_shore(wmat: ShaderMaterial) -> void:
+	if str(spec.get("id", "")) != "rene-levasseur":
+		wmat.set_shader_parameter("has_shore", 0.0)
+		return
+	var started := Time.get_ticks_msec()
+	var span := float(field.cols - 1) * field.spacing
+	var shore_img: Image = _Shore.build(field.heights, field.cols, field.rows, float(spec["water"]), span, 128, 96.0)
+	var shore_tex := ImageTexture.create_from_image(shore_img)
+	wmat.set_shader_parameter("shore_field", shore_tex)
+	wmat.set_shader_parameter("shore_scale", 96.0)
+	wmat.set_shader_parameter("has_shore", 1.0)
+	print("shore field ", Time.get_ticks_msec() - started, " ms")
 
 
 func _build_apron() -> void:
@@ -805,6 +868,8 @@ func _build_apron() -> void:
 
 func rebuild_around(pos: Vector3) -> void:
 	focus = pos
+	if streaming:
+		return
 	_stream(pos)
 	_update_collision(pos)
 

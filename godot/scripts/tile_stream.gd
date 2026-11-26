@@ -5,7 +5,7 @@ extends RefCounted
 ## Elevation is Mapzen Terrarium on the public AWS bucket. Imagery is EOX
 ## Sentinel-2 cloudless. Both are cached under user://stream with a file cap.
 
-const CACHE_CAP := 180
+const CACHE_CAP := 240
 const ELEV := "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/%d/%d/%d.png"
 const IMG := "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/GoogleMapsCompatible/%d/%d/%d.jpg"
 

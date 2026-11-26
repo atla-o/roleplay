@@ -27,6 +27,13 @@ replaced or separately licensed before the game is sold.
 - Source: Natural Resources Canada, 2020 Land Cover of Canada, 30 m, windowed onto the island tile (`godot/data/ile_cover.png`).
 - License: Open Government Licence – Canada.
 
+## Streamed north
+
+- Elevation: Mapzen Terrarium on the public AWS bucket, `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png`.
+- Imagery: EOX Sentinel-2 cloudless, 2021. **Swap before sales.**
+- Roads, water, and settlements: OpenFreeMap vector tiles (`https://tiles.openfreemap.org/planet/latest/{z}/{x}/{y}.pbf`), OpenMapTiles schema, data from OpenStreetMap. License: ODbL for the OSM data. Credit OpenFreeMap, OpenMapTiles, and OpenStreetMap contributors.
+- Coverage in game is 45°N and north. Tiles are cached under `user://stream` with a file cap.
+
 ## Northern low-resolution backdrop
 
 - Source: the existing polar grid (`godot/data/north.u16`, `godot/data/north_color.jpg`) baked from Mapzen Terrarium elevation and EOX Sentinel-2 cloudless.

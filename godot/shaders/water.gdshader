@@ -9,6 +9,9 @@ uniform vec2 tile_m = vec2(4000.0, 4000.0);
 uniform vec2 tile_origin = vec2(0.0, 0.0);
 uniform float use_ssr = 0.0;
 uniform vec3 sun_dir = vec3(0.45, 0.42, 0.78);
+uniform sampler2D shore_field : filter_linear, repeat_disable;
+uniform float has_shore = 0.0;
+uniform float shore_scale = 96.0;
 
 varying vec3 world_pos;
 
@@ -64,6 +67,20 @@ void fragment() {
 		discard;
 	}
 	float depth = max(water_y - bed, 0.0);
+	float shore_m = 48.0;
+	if (has_shore > 0.5) {
+		shore_m = texture(shore_field, uv).r * shore_scale;
+	} else {
+		vec2 texel = vec2(18.0 / tile_m.x, 18.0 / tile_m.y);
+		for (int i = 0; i < 8; i++) {
+			float ang = 0.785398 * float(i);
+			vec2 off = vec2(cos(ang), sin(ang)) * texel;
+			float bed_i = in_tile ? decode_h(uv + off) : water_y - 6.0;
+			if (bed_i > water_y - 0.15) {
+				shore_m = min(shore_m, 18.0);
+			}
+		}
+	}
 	float rise = 0.0;
 	if (in_tile) {
 		rise = max(abs(decode_h(uv + vec2(0.004, 0.0)) - raw), abs(decode_h(uv + vec2(0.0, 0.004)) - raw));
@@ -71,15 +88,21 @@ void fragment() {
 	// The stored reservoir is a flat sheet on the waterline, so that reads as deep water.
 	float sheet = (1.0 - smoothstep(0.25, 2.8, rise)) * (1.0 - smoothstep(0.15, 2.2, abs(water_y - raw)));
 	float shown = mix(depth, 6.0, sheet);
+	// The jump-flood distance stands in for depth where the stored reservoir is a flat sheet.
+	float field_depth = shore_m * 0.55;
+	shown = max(shown, mix(depth, field_depth, sheet));
 
 	float w1 = sin(world_pos.x * 0.05 + world_pos.z * 0.02 + TIME * 0.35);
 	float w2 = sin(world_pos.z * 0.04 - TIME * 0.22);
 	float w3 = sin((world_pos.x + world_pos.z) * 0.015 + TIME * 0.15);
 	vec3 wn = normalize(vec3(-w1 * 0.035 - w3 * 0.02, 1.0, -w2 * 0.03));
 
-	vec3 shallow = vec3(0.22, 0.32, 0.28);
-	vec3 deep = vec3(0.04, 0.09, 0.13);
-	vec3 water = mix(shallow, deep, smoothstep(0.15, 5.0, shown));
+	vec3 shallow = vec3(0.30, 0.42, 0.34);
+	vec3 mid = vec3(0.10, 0.24, 0.26);
+	vec3 deep = vec3(0.02, 0.05, 0.09);
+	float depth_k = smoothstep(0.2, 8.0, shown);
+	float far_k = smoothstep(6.0, 42.0, max(shown, shore_m * 0.65));
+	vec3 water = mix(mix(shallow, mid, depth_k), deep, far_k);
 
 	vec3 view_w = normalize(CAMERA_POSITION_WORLD - world_pos);
 	vec3 refl = reflect(-view_w, wn);
@@ -92,20 +115,7 @@ void fragment() {
 		color = mix(color, mirror, fres * 0.28);
 	}
 
-	// Distance to land, in the sense of FableFlight's shore field: how far the
-	// water is from a bed that breaks the surface. A few taps stand in for the
-	// jump flood on this single reservoir mesh.
-	float shore_m = 48.0;
-	vec2 texel = vec2(18.0 / tile_m.x, 18.0 / tile_m.y);
-	for (int i = 0; i < 8; i++) {
-		float ang = 0.785398 * float(i);
-		vec2 off = vec2(cos(ang), sin(ang)) * texel;
-		float bed_i = in_tile ? decode_h(uv + off) : water_y - 6.0;
-		if (bed_i > water_y - 0.15) {
-			shore_m = min(shore_m, 18.0);
-		}
-	}
-	float foam = (1.0 - smoothstep(0.0, 22.0, shore_m)) * (1.0 - smoothstep(0.05, 1.4, sheet));
+	float foam = (1.0 - smoothstep(0.4, 28.0, shore_m)) * (1.0 - smoothstep(0.05, 1.4, sheet));
 	float lip = smoothstep(0.0, 0.25, depth) * (1.0 - smoothstep(0.25, 1.6, depth));
 	float broken = step(0.42, hash21(floor(world_pos.xz * 0.35)));
 	color = mix(color, vec3(0.55, 0.62, 0.6), foam * 0.35 * broken);

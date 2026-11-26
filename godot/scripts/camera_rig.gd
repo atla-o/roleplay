@@ -25,6 +25,7 @@ var _shoulder := 0.0
 var _height := 1.35
 var anchor_lift := 1.15
 var _omega := 14.0
+var framing := "robot"
 
 func _ready() -> void:
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
@@ -48,11 +49,19 @@ func _process(dt: float) -> void:
 	var orbit := (fwd * cos(yaw_offset) + right * sin(yaw_offset)).normalized()
 	var body := target.global_position
 	var aim := body + Vector3.UP * anchor_lift
-	var desired := aim - orbit * distance * cos(pitch_up) + Vector3.UP * distance * sin(pitch_up)
+	var arm_distance := distance
+	var arm_pitch := pitch_up
+	if framing == "drone" and terrain != null:
+		var ground := terrain.sample(body.x, body.z)
+		var alt := maxf(body.y - ground, 0.0)
+		var lift := smoothstep(18.0, 220.0, alt)
+		arm_distance = clampf(lerpf(distance, alt * 0.42, lift), distance, 360.0)
+		arm_pitch = clampf(pitch_up + lift * 0.48, pitch_up, 1.12)
+	var desired := aim - orbit * arm_distance * cos(arm_pitch) + Vector3.UP * arm_distance * sin(arm_pitch)
 	desired += right * _shoulder
 	desired = _pull_arm(aim, desired)
 	var offset := desired - body
-	var limit := distance * 1.15 + 2.0
+	var limit := arm_distance * 1.15 + 2.0
 	if offset.length() > limit:
 		desired = body + offset.normalized() * limit
 	if not _placed:
@@ -119,15 +128,33 @@ func configure(kind: String) -> void:
 			_omega = 16.0
 			camera.near = 0.08
 		"drone":
-			_presets = [18.0, 40.0, 90.0]
+			_presets = [16.0, 28.0, 48.0]
 			_preset = 1
-			distance = 40.0
-			pitch_up = 0.55
-			fov_base = 62.0
+			distance = 28.0
+			pitch_up = 0.48
+			fov_base = 55.0
 			_shoulder = 0.0
 			_height = 0.4
+			anchor_lift = 0.7
 			_omega = 8.0
 			camera.near = 0.3
+			camera.far = 80000.0
+			framing = "drone"
+		"yard":
+			_presets = [6.0, 9.0, 14.0]
+			_preset = 1
+			distance = 9.0
+			pitch_up = 0.34
+			fov_base = 50.0
+			_shoulder = 0.15
+			_height = 0.7
+			anchor_lift = 0.62
+			_omega = 14.0
+			camera.near = 0.12
+			framing = "yard"
+	if kind != "drone":
+		framing = kind
+		camera.far = 14000.0
 	camera.fov = fov_base
 
 

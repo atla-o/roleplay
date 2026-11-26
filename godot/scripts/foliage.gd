@@ -12,6 +12,13 @@ var fir_near: ArrayMesh
 var fir_far: ArrayMesh
 var birch_card: ArrayMesh
 var shrub_card: ArrayMesh
+var spruce_mesh: ArrayMesh
+var fir_mesh: ArrayMesh
+var spruce_octa: ArrayMesh
+var fir_octa: ArrayMesh
+var terrain_ref: TerrainWorld
+var saplings: Array = []
+var felled_logs: Array[RigidBody3D] = []
 
 func _ready() -> void:
 	var shader: Shader = load("res://shaders/tree_card.gdshader")
@@ -23,9 +30,15 @@ func _ready() -> void:
 	shrub_card = _card(load("res://assets/textures/shrub_card.png") as Texture2D, shader, 2, 0.9, 0.9, 0.04)
 	pines = [spruce_near, fir_near]
 	boulders = _meshes("res://assets/models/boulder.glb")
+	spruce_mesh = _spruce_mesh()
+	fir_mesh = _fir_mesh()
+	spruce_octa = _octa_card("res://assets/textures/spruce_octa.png", 7.6, 1.7)
+	fir_octa = _octa_card("res://assets/textures/fir_octa.png", 7.6, 2.05)
 
 
 func rebuild(terrain: TerrainWorld, albedo: Texture2D) -> void:
+	terrain_ref = terrain
+	saplings.clear()
 	for child in get_children():
 		child.queue_free()
 	if str(terrain.spec.get("id")) == "rene-levasseur" and spruce_near != null:
@@ -246,11 +259,13 @@ func _place_boreal(terrain: TerrainWorld, cover: Image) -> void:
 			if px.g > 0.4 or veg < 0.7:
 				tall *= 0.78
 			var yaw := _hash(x + 8, y) * TAU
-			var xf := _xf(east, hh - 0.25, north, yaw, tall)
+			var crown_m := _crown_metres(photo, east, north, span)
+			var xz := clampf(crown_m / 1.35, 0.55, 1.75)
+			var xf := _xf_crown(east, hh - 0.25, north, yaw, xz, tall * 1.75)
 			var lum := (pix.r + pix.g + pix.b) / 3.0
 			var gain := clampf(0.62 / maxf(lum, 0.05), 0.5, 1.8)
 			var tint := Color(clampf(pix.r * gain, 0.0, 1.0), clampf(pix.g * gain, 0.0, 1.0), clampf(pix.b * gain, 0.0, 1.0))
-			var fir := _hash(x + 1, y + 4) > 0.8
+			var fir := xz > 1.12
 			if dist < 85.0:
 				if fir:
 					near_f.append(xf)
@@ -272,13 +287,23 @@ func _place_boreal(terrain: TerrainWorld, cover: Image) -> void:
 				else:
 					far_s.append(xf)
 					far_s_c.append(tint)
-	_spawn(spruce_near, near_s, true, 0.0, 110.0, near_s_c)
-	_spawn(fir_near, near_f, true, 0.0, 110.0, near_f_c)
+	var far_spruce: Array[Transform3D] = []
+	var far_fir: Array[Transform3D] = []
+	var far_spruce_c: Array[Color] = []
+	var far_fir_c: Array[Color] = []
+	far_spruce.append_array(mid_s)
+	far_spruce.append_array(far_s)
+	far_fir.append_array(mid_f)
+	far_fir.append_array(far_f)
+	far_spruce_c.append_array(mid_s_c)
+	far_spruce_c.append_array(far_s_c)
+	far_fir_c.append_array(mid_f_c)
+	far_fir_c.append_array(far_f_c)
+	_spawn(spruce_mesh, near_s, true, 0.0, 130.0, near_s_c)
+	_spawn(fir_mesh, near_f, true, 0.0, 130.0, near_f_c)
 	_spawn(birch_card, birch_near, true, 0.0, 140.0)
-	_spawn(spruce_far, mid_s, false, 70.0, 320.0, mid_s_c)
-	_spawn(fir_far, mid_f, false, 70.0, 320.0, mid_f_c)
-	_spawn(spruce_far, far_s, false, 240.0, 1500.0, far_s_c)
-	_spawn(fir_far, far_f, false, 240.0, 1500.0, far_f_c)
+	_spawn(spruce_octa, far_spruce, false, 80.0, 1600.0, far_spruce_c)
+	_spawn(fir_octa, far_fir, false, 80.0, 1600.0, far_fir_c)
 	_spawn(shrub_card, shrubs, false, 0.0, 95.0)
 	for mesh in boulders:
 		_spawn(mesh, rocks, true, 0.0, 180.0)
@@ -287,7 +312,8 @@ func _place_boreal(terrain: TerrainWorld, cover: Image) -> void:
 		if trunks.size() < 36 and Vector2(item.origin.x, item.origin.z).distance_to(spawn) < 40.0:
 			trunks.append(item)
 	_collide(trunks, 0.35, 8.0)
-	print("boreal near ", near_s.size() + near_f.size(), " mid ", mid_s.size() + mid_f.size(), " far ", far_s.size() + far_f.size(), " shrubs ", shrubs.size())
+	_plant_yard_saplings(terrain, spawn, water)
+	print("boreal near ", near_s.size() + near_f.size(), " mid ", mid_s.size() + mid_f.size(), " far ", far_s.size() + far_f.size(), " shrubs ", shrubs.size(), " saplings ", saplings.size())
 
 
 func _collide(items: Array[Transform3D], radius: float, height: float) -> void:
@@ -597,7 +623,7 @@ func _spruce_mesh() -> ArrayMesh:
 	st.generate_normals()
 	var mesh := st.commit()
 	var mat := ShaderMaterial.new()
-	mat.shader = load("res://shaders/foliage.gdshader")
+	mat.shader = load("res://shaders/crown.gdshader")
 	mesh.surface_set_material(0, mat)
 	return mesh
 
@@ -615,7 +641,7 @@ func _fir_mesh() -> ArrayMesh:
 	st.generate_normals()
 	var mesh := st.commit()
 	var mat := ShaderMaterial.new()
-	mat.shader = load("res://shaders/foliage.gdshader")
+	mat.shader = load("res://shaders/crown.gdshader")
 	mesh.surface_set_material(0, mat)
 	return mesh
 
@@ -630,6 +656,7 @@ func _whorl(st: SurfaceTool, y0: float, y1: float, r0: float, r1: float, color: 
 		var t1 := Vector3(cos(a1) * r1, y1, sin(a1) * r1)
 		for p in [b0, t0, b1, b1, t0, t1]:
 			st.set_color(color)
+			st.set_uv(Vector2(0.5, clampf(p.y / 8.0, 0.0, 1.0)))
 			st.add_vertex(p)
 
 
@@ -651,3 +678,152 @@ func _hash(x: int, y: int) -> float:
 	var n := x * 374761393 + y * 668265263
 	n = (n ^ (n >> 13)) * 1274126177
 	return float(n & 0x7fffffff) / 2147483647.0
+
+
+func clear() -> void:
+	saplings.clear()
+	for child in get_children():
+		child.queue_free()
+
+
+func _process(_dt: float) -> void:
+	if terrain_ref == null:
+		return
+	for log in felled_logs:
+		if not is_instance_valid(log) or log.freeze:
+			continue
+		var ground := terrain_ref.sample(log.global_position.x, log.global_position.z)
+		if log.global_position.y < ground + 0.08:
+			var at := log.global_position
+			at.y = ground + 0.16
+			log.global_position = at
+			var vel := log.linear_velocity
+			vel.y = maxf(vel.y, 0.0)
+			log.linear_velocity = vel
+
+
+func _crown_metres(photo: Image, east: float, north: float, span: float) -> float:
+	if photo == null:
+		return 1.3
+	var cx := int(east / span * float(photo.get_width() - 1))
+	var cy := int((1.0 - north / span) * float(photo.get_height() - 1))
+	var max_r := 0.0
+	var metres_per := span / float(photo.get_width())
+	for dy in range(-4, 5):
+		for dx in range(-4, 5):
+			var px := clampi(cx + dx, 0, photo.get_width() - 1)
+			var py := clampi(cy + dy, 0, photo.get_height() - 1)
+			var sample := photo.get_pixel(px, py)
+			if sample.g > sample.r + 0.012 and sample.g > 0.08:
+				max_r = maxf(max_r, Vector2(float(dx), float(dy)).length())
+	return clampf(max_r * metres_per, 0.8, 2.6)
+
+
+func _xf_crown(x: float, y: float, z: float, yaw: float, crown: float, height: float) -> Transform3D:
+	var basis := Basis(Vector3.UP, yaw).scaled(Vector3(crown, height, crown))
+	return Transform3D(basis, Vector3(x, y, z))
+
+
+func _octa_card(path: String, height: float, half_w: float) -> ArrayMesh:
+	var tex := load(path) as Texture2D
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var verts: Array[Vector3] = [
+		Vector3(-half_w, 0.0, 0.0),
+		Vector3(-half_w, height, 0.0),
+		Vector3(half_w, 0.0, 0.0),
+		Vector3(half_w, 0.0, 0.0),
+		Vector3(-half_w, height, 0.0),
+		Vector3(half_w, height, 0.0),
+	]
+	var uvs: Array[Vector2] = [
+		Vector2(0, 0), Vector2(0, 1), Vector2(1, 0),
+		Vector2(1, 0), Vector2(0, 1), Vector2(1, 1),
+	]
+	for i in verts.size():
+		st.set_color(Color(1, 1, 1))
+		st.set_uv(uvs[i])
+		st.add_vertex(verts[i])
+	st.generate_normals()
+	var mesh := st.commit()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/impostor.gdshader")
+	mat.set_shader_parameter("atlas", tex)
+	mesh.surface_set_material(0, mat)
+	return mesh
+
+
+func _plant_yard_saplings(terrain: TerrainWorld, spawn: Vector2, water: float) -> void:
+	var spots: Array[Vector2] = [Vector2(6.0, 3.5), Vector2(8.0, -2.0), Vector2(-5.0, 6.0), Vector2(4.0, 8.0)]
+	var diameters: Array[float] = [0.05, 0.062, 0.055, 0.09]
+	for i in spots.size():
+		var at: Vector2 = spawn + spots[i]
+		var h := terrain.sample(at.x, at.y)
+		if h < water + 1.2:
+			continue
+		plant_sapling(at.x, h, at.y, diameters[i])
+
+
+func plant_sapling(x: float, y: float, z: float, diameter: float) -> Dictionary:
+	var mi := MeshInstance3D.new()
+	mi.mesh = spruce_mesh if spruce_mesh != null else spruce_near
+	mi.scale = Vector3(0.22, 0.32, 0.22)
+	mi.position = Vector3(x, y, z)
+	add_child(mi)
+	var rec := {"x": x, "y": y, "z": z, "diameter": diameter, "alive": true, "node": mi}
+	saplings.append(rec)
+	return rec
+
+
+func try_saw(at: Vector3, reach: float) -> void:
+	for rec in saplings:
+		if not bool(rec.get("alive", false)):
+			continue
+		if float(rec.get("diameter", 1.0)) >= 0.0762:
+			continue
+		var flat := Vector2(at.x, at.z).distance_to(Vector2(float(rec["x"]), float(rec["z"])))
+		if flat > reach:
+			continue
+		fell(rec)
+		return
+
+
+func fell(rec: Dictionary) -> RigidBody3D:
+	rec["alive"] = false
+	var node: Node = rec.get("node")
+	if node != null and is_instance_valid(node):
+		node.queue_free()
+		rec["node"] = null
+	var body := RigidBody3D.new()
+	body.mass = 28.0
+	body.collision_layer = 4
+	body.collision_mask = 1
+	body.linear_damp = 0.4
+	body.angular_damp = 1.2
+	var shape := CollisionShape3D.new()
+	var cyl := CylinderShape3D.new()
+	cyl.radius = maxf(float(rec["diameter"]) * 0.5, 0.025)
+	cyl.height = 2.4
+	shape.shape = cyl
+	shape.rotation.z = PI * 0.5
+	body.add_child(shape)
+	var mi := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = cyl.radius
+	mesh.bottom_radius = cyl.radius
+	mesh.height = 2.4
+	mi.mesh = mesh
+	mi.rotation.z = PI * 0.5
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.42, 0.27, 0.14)
+	mat.roughness = 0.9
+	mi.material_override = mat
+	body.add_child(mi)
+	body.position = Vector3(float(rec["x"]), float(rec["y"]) + 0.22, float(rec["z"]))
+	var parent := get_parent()
+	if parent:
+		parent.add_child(body)
+	else:
+		add_child(body)
+	felled_logs.append(body)
+	return body

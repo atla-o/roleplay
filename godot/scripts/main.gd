@@ -37,9 +37,20 @@ var map_test := false
 var teleport_test := false
 var camera_test := false
 var stream_smoke := false
+var osm_probe := false
 var fly_test := false
+var yard_test := false
+var yard_drive := 0.0
 var camera_time := 0.0
 var manipulate_label: Label
+var yard: YardMachine
+var load_fade: ColorRect
+var load_label: Label
+var _pin_pending := false
+var _pin_since := 0
+var _pin_lat := 0.0
+var _pin_lon := 0.0
+const _Yard = preload("res://scripts/yard.gd")
 
 func _ready() -> void:
 	DisplayServer.window_set_title("Roleplay")
@@ -54,6 +65,13 @@ func _ready() -> void:
 	vehicle.terrain = terrain
 	vehicle.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
 	add_child(vehicle)
+	yard = _Yard.new()
+	yard.terrain = terrain
+	yard.foliage = foliage
+	foliage.terrain_ref = terrain
+	add_child(yard)
+	yard.visible = false
+	yard.set_physics_process(false)
 	human = Walker.new()
 	human.terrain = terrain
 	human.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_ON
@@ -80,14 +98,16 @@ func _ready() -> void:
 	if fly_test:
 		_run_fly_test()
 		return
+	if yard_test:
+		_run_yard_test()
+		return
+	if osm_probe:
+		_run_osm_probe()
+		return
 	if stream_smoke:
 		terrain.stream_radius = 0
 		terrain.imagery_zoom = 6
-		north_map.drop_latlon(78.2, 16.0)
-		_teleport_pin()
-		var sh := terrain.sample(0.0, 0.0)
-		print("stream ", terrain.spec.get("id"), " h ", sh, " flying ", vehicle.flying)
-		get_tree().quit(0 if str(terrain.spec.get("id")).begins_with("stream-") and not is_nan(sh) else 1)
+		_run_stream_smoke()
 		return
 	if shot_dir != "":
 		_shots()
@@ -112,6 +132,17 @@ func _process(dt: float) -> void:
 		manipulate_label.modulate.a = move_toward(manipulate_label.modulate.a, 0.0, dt * 0.45)
 		if manipulate_label.modulate.a <= 0.02:
 			manipulate_label.visible = false
+	if active and terrain:
+		var cam_pos := active.global_position
+		var fov := 55.0
+		var view_h := get_viewport().get_visible_rect().size.y
+		if camera and camera.camera:
+			cam_pos = camera.camera.global_position
+			fov = camera.camera.fov
+		var shift := terrain.tick_stream(active.global_position, cam_pos, fov, view_h)
+		if shift.length_squared() > 1.0:
+			_apply_origin_shift(shift)
+		_settle_pin()
 	if active:
 		terrain.focus = active.global_position
 	if terrain and terrain.persist:
@@ -172,13 +203,26 @@ func _process(dt: float) -> void:
 		throttle = 1.0
 		steer = 0.0
 		lower = true
+	if yard_test:
+		throttle = yard_drive
+		steer = 0.0
 	if camera_test:
 		camera_time += dt
 		throttle = 0.9
 		steer = sin(camera_time * 1.7)
 		if fmod(camera_time, 5.0) < 0.4:
 			steer = 1.0 if sin(camera_time * 0.7) > 0.0 else -1.0
-	if kind != "human":
+	if kind == "yard" and yard != null:
+		yard.throttle = clampf(throttle, -1.0, 1.0)
+		yard.steer = clampf(steer, -1.0, 1.0)
+		if not yard.manipulate:
+			yard.blade_angle = 0.35
+		var yard_rate := 0.8 * dt
+		if yard.manipulate and raise:
+			yard.blade_angle = minf(0.4, yard.blade_angle + yard_rate)
+		if yard.manipulate and lower:
+			yard.blade_angle = maxf(-0.55, yard.blade_angle - yard_rate)
+	elif kind != "human":
 		vehicle.throttle = clampf(throttle, -1.0, 1.0)
 		vehicle.steer = clampf(steer, -1.0, 1.0)
 		if not vehicle.manipulate:
@@ -197,6 +241,7 @@ func _process(dt: float) -> void:
 		walker.wish = Vector2(clampf(side, -1.0, 1.0), clampf(ahead, -1.0, 1.0))
 		walker.running = Input.is_key_pressed(KEY_SHIFT) or rt > 0.4
 		walker.jumping = Input.is_key_pressed(KEY_SPACE) or Input.is_joy_button_pressed(0, JOY_BUTTON_A)
+	_fade_loading(dt)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -205,11 +250,19 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F and (panel == null or not panel.visible):
-		if str(terrain.spec.get("id", "")) != "rene-levasseur":
+		if kind == "yard" and yard != null and str(terrain.spec.get("id", "")) == "rene-levasseur":
+			yard.set_manipulate(not yard.manipulate)
+			_flash_notice("%s %s" % [yard.tool_name(), "down" if yard.manipulate else "up"])
+		elif str(terrain.spec.get("id", "")) != "rene-levasseur":
 			_flash_notice("Dig not available here yet")
 		else:
 			vehicle.set_manipulate(not vehicle.manipulate)
 			_flash_manipulate()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R and kind == "yard" and yard != null and (panel == null or not panel.visible):
+		yard.cycle_tool()
+		_flash_notice(yard.tool_name())
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton and event.pressed and (panel == null or not panel.visible):
@@ -397,10 +450,24 @@ func _activate(next: String) -> void:
 	vehicle.flying = drone
 	vehicle.gravity_scale = 0.0 if drone else 1.0
 	vehicle.set_physics_process(next == "robot" or drone)
-	vehicle.visible = next != "human"
+	vehicle.visible = next == "robot" or drone
+	if yard:
+		yard.visible = next == "yard"
+		yard.set_physics_process(next == "yard")
+		if next != "yard":
+			yard.throttle = 0.0
+		else:
+			var at := vehicle.global_position
+			_place(yard, at.x, at.z, 0.0)
+			_place(vehicle, at.x + 14.0, at.z - 8.0, 0.0)
 	human.set_physics_process(next == "human")
 	human.visible = next == "human"
-	active = human if next == "human" else vehicle
+	if next == "human":
+		active = human
+	elif next == "yard":
+		active = yard
+	else:
+		active = vehicle
 	camera.target = active
 	camera.configure(next)
 	camera.yaw_offset = 0.0
@@ -465,18 +532,23 @@ func _ui() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(spacer)
-	for entry in [["Robot", "robot"], ["Human", "human"], ["Drone", "drone"]]:
+	for entry in [["Robot", "robot"], ["Yard", "yard"], ["Human", "human"], ["Drone", "drone"]]:
 		var b := _menu_button(entry[0])
 		b.custom_minimum_size = Vector2(72, 30)
 		b.size_flags_horizontal = Control.SIZE_SHRINK_END
 		b.pressed.connect(_activate.bind(entry[1]))
 		top.add_child(b)
-	var detail := _menu_button("Imagery 8")
+	var detail := _menu_button("Detail 13")
 	detail.custom_minimum_size = Vector2(96, 30)
 	detail.size_flags_horizontal = Control.SIZE_SHRINK_END
 	detail.pressed.connect(func() -> void:
-		terrain.imagery_zoom = 6 if terrain.imagery_zoom >= 10 else terrain.imagery_zoom + 2
-		detail.text = "Imagery %d" % terrain.imagery_zoom
+		if terrain.detail_cap >= 14:
+			terrain.detail_cap = 11
+		elif terrain.detail_cap < 13:
+			terrain.detail_cap = 13
+		else:
+			terrain.detail_cap = 14
+		detail.text = "Detail %d" % terrain.detail_cap
 	)
 	top.add_child(detail)
 	var map_host := Control.new()
@@ -523,6 +595,24 @@ func _ui() -> void:
 	manipulate_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	manipulate_label.visible = false
 	ui.add_child(manipulate_label)
+	load_fade = ColorRect.new()
+	load_fade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	load_fade.color = Color(0.02, 0.03, 0.04, 1.0)
+	load_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	load_fade.visible = false
+	load_fade.modulate.a = 0.0
+	ui.add_child(load_fade)
+	load_label = Label.new()
+	load_label.text = "Loading the north"
+	load_label.set_anchors_preset(Control.PRESET_CENTER)
+	load_label.offset_left = -80.0
+	load_label.offset_top = -12.0
+	load_label.offset_right = 80.0
+	load_label.offset_bottom = 12.0
+	load_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	load_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	load_label.visible = false
+	ui.add_child(load_label)
 	menu_root.add_child(panel)
 
 
@@ -683,27 +773,62 @@ func _teleport_pin() -> void:
 	if lat < 45.0:
 		_flash_notice("Coming soon")
 		return
-	var streamed: Dictionary = terrain.open_stream(lat, lon, _grain())
-	if not streamed.is_empty():
-		foliage.rebuild(terrain, terrain.color_tex)
-		_place(vehicle, 0.0, 0.0, 0.0)
-		_place(human, 14.0, -10.0, 0.0)
-		vehicle.flying = true
-		vehicle.gravity_scale = 0.0
-		_activate("drone")
-		if camera.camera:
-			camera.camera.far = 80000.0
-		terrain.focus = active.global_position
-		_tune_site()
-		camera.snap()
-		camera.hold = false
-		_close_menu()
+	_pin_lat = lat
+	_pin_lon = lon
+	terrain.begin_stream(lat, lon)
+	foliage.clear()
+	_activate("drone")
+	vehicle.global_position = Vector3(0.0, 36.0, 0.0)
+	vehicle.linear_velocity = Vector3.ZERO
+	vehicle.angular_velocity = Vector3.ZERO
+	if camera.camera:
+		camera.camera.far = 80000.0
+	terrain.focus = vehicle.global_position
+	_pin_pending = true
+	_pin_since = Time.get_ticks_msec()
+	camera.snap()
+	camera.hold = false
+	_close_menu()
+
+
+func _settle_pin() -> void:
+	if not _pin_pending:
 		return
+	var pos := active.global_position if active else Vector3.ZERO
+	var elapsed := Time.get_ticks_msec() - _pin_since
+	if terrain.stream_ready(pos.x, pos.z):
+		_finish_stream_pin()
+	elif terrain.stream_failed() or elapsed > 22000:
+		_fallback_north()
+
+
+func _finish_stream_pin() -> void:
+	_pin_pending = false
+	var x := vehicle.global_position.x
+	var z := vehicle.global_position.z
+	_place(vehicle, x, z, 0.0)
+	var h := terrain.sample(x, z)
+	vehicle.global_position.y = h + 16.0
+	vehicle.linear_velocity = Vector3.ZERO
+	vehicle.angular_velocity = Vector3.ZERO
+	_place(human, x + 14.0, z - 10.0, 0.0)
+	terrain.focus = vehicle.global_position
+	_tune_site()
+	camera.snap()
+	if pin_label:
+		pin_label.text = "Landed %.4f°, %.4f°" % [_pin_lat, _pin_lon]
+
+
+func _fallback_north() -> void:
+	_pin_pending = false
+	terrain.streaming = false
+	if terrain.quad:
+		terrain.quad.shutdown()
 	var meta: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/north.json"))
 	if meta == null:
 		_flash_notice("Coming soon")
 		return
-	var landed: Dictionary = terrain.open_north(meta, lat, lon, _grain())
+	var landed: Dictionary = terrain.open_north(meta, _pin_lat, _pin_lon, _grain())
 	if landed.is_empty() or terrain.field == null:
 		_flash_notice("Coming soon")
 		return
@@ -712,24 +837,42 @@ func _teleport_pin() -> void:
 		_flash_notice("Coming soon")
 		return
 	foliage.rebuild(terrain, terrain.color_tex)
-	var yaw_v := 0.0
-	_place(vehicle, float(landed["x"]), float(landed["z"]), yaw_v)
+	_activate("drone")
+	_place(vehicle, float(landed["x"]), float(landed["z"]), 0.0)
+	vehicle.global_position.y = landed_h + 16.0
 	if camera.camera:
 		camera.camera.far = 280000.0 if float(terrain.spec["spacing"]) > 100.0 else 14000.0
-	if not vehicle.manipulate:
-		vehicle.blade_angle = 0.4
 	vehicle.linear_velocity = Vector3.ZERO
 	vehicle.angular_velocity = Vector3.ZERO
-	_place(human, float(landed["x"]) + 14.0, float(landed["z"]) - 10.0, yaw_v)
-	if kind == "human":
-		_place(human, float(landed["x"]), float(landed["z"]), yaw_v)
+	_place(human, float(landed["x"]) + 14.0, float(landed["z"]) - 10.0, 0.0)
 	terrain.focus = active.global_position
 	_tune_site()
 	camera.snap()
 	camera.hold = false
 	if pin_label:
 		pin_label.text = "Landed %.4f°, %.4f°" % [float(landed["lat"]), float(landed["lon"])]
-	_close_menu()
+
+
+func _apply_origin_shift(shift: Vector3) -> void:
+	for body in [vehicle, human, yard]:
+		if body:
+			body.global_position -= shift
+	if camera:
+		camera.arm_pos -= shift
+	for log in foliage.felled_logs:
+		if is_instance_valid(log):
+			log.global_position -= shift
+
+
+func _fade_loading(dt: float) -> void:
+	if load_fade == null:
+		return
+	var show := _pin_pending
+	var target := 0.86 if show else 0.0
+	load_fade.modulate.a = move_toward(load_fade.modulate.a, target, dt * 2.2)
+	load_fade.visible = load_fade.modulate.a > 0.03
+	if load_label:
+		load_label.visible = load_fade.visible
 
 
 func _remember_pin(lat: float, lon: float) -> void:
@@ -801,16 +944,32 @@ func _mark_map() -> void:
 
 
 func _shot_altitude(lat: float, lon: float, near_name: String, far_name: String) -> void:
+	terrain.detail_cap = 13
 	north_map.drop_latlon(lat, lon)
 	_teleport_pin()
+	var wait := Time.get_ticks_msec()
+	while _pin_pending and Time.get_ticks_msec() - wait < 30000:
+		await get_tree().process_frame
+	var refine := Time.get_ticks_msec()
+	while terrain.quad and terrain.streaming and terrain.quad.finest_zoom(vehicle.global_position.x, vehicle.global_position.z) < 11 and Time.get_ticks_msec() - refine < 25000:
+		await get_tree().process_frame
+	var mesh_wait := Time.get_ticks_msec()
+	while terrain.quad and not terrain.quad.fine_mesh() and Time.get_ticks_msec() - mesh_wait < 20000:
+		await get_tree().process_frame
+	if terrain.quad:
+		terrain.quad.reveal_now(vehicle.global_position)
 	camera.hold = true
 	vehicle.visible = false
-	var ground := terrain.sample(0.0, 0.0)
-	camera.camera.global_position = Vector3(-280.0, ground + 500.0, -280.0)
-	camera.camera.look_at(Vector3(220.0, ground, 220.0), Vector3.UP)
+	vehicle.freeze = true
+	var ground := terrain.sample(vehicle.global_position.x, vehicle.global_position.z)
+	var eye_y := maxf(vehicle.global_position.y, ground) + 55.0
+	camera.camera.fov = 58.0
+	camera.camera.global_position = vehicle.global_position + Vector3(-80.0, 0.0, -90.0)
+	camera.camera.global_position.y = eye_y
+	camera.camera.look_at(vehicle.global_position + Vector3(60.0, ground - vehicle.global_position.y + 6.0, 40.0), Vector3.UP)
 	await _shot(near_name)
-	camera.camera.global_position = Vector3(-1400.0, ground + 3000.0, -1400.0)
-	camera.camera.look_at(Vector3(600.0, ground, 600.0), Vector3.UP)
+	camera.camera.global_position = Vector3(-900.0, ground + 2600.0, -1100.0)
+	camera.camera.look_at(Vector3(180.0, ground + 4.0, 160.0), Vector3.UP)
 	await _shot(far_name)
 
 
@@ -964,8 +1123,12 @@ func _read_args() -> void:
 			camera_test = true
 		if arg == "--stream-smoke":
 			stream_smoke = true
+		if arg == "--osm-probe":
+			osm_probe = true
 		if arg == "--fly-test":
 			fly_test = true
+		if arg == "--yard-test":
+			yard_test = true
 	if OS.get_environment("ROLEPLAY_CAPTURE") == "1":
 		capture = true
 	if OS.has_feature("web"):
@@ -1015,6 +1178,19 @@ func _shots() -> void:
 					await get_tree().process_frame
 				await _shot("island-shore")
 			_open_menu()
+	if _take("yard-close"):
+		_activate("yard")
+		var sx := float(terrain.spec["spawn"][0])
+		var sz := float(terrain.spec["spawn"][1])
+		_place(yard, sx, sz, 0.4)
+		yard.tool = 0
+		yard.set_manipulate(true)
+		camera.hold = true
+		var yfwd := yard.forward()
+		var yside := Vector3(yfwd.z, 0.0, -yfwd.x)
+		camera.camera.global_position = yard.global_position + yfwd * 6.2 + yside * 4.6 + Vector3.UP * 2.6
+		camera.camera.look_at(yard.global_position + yfwd * 0.2 + Vector3.UP * 0.55, Vector3.UP)
+		await _shot("yard-close")
 	if _take("cmp-shore") or _take("cmp-forest") or _take("cmp-rock"):
 		_close_menu()
 		if _take("cmp-shore"):
@@ -1118,19 +1294,56 @@ func _run_teleport_test() -> void:
 	for _i in 10:
 		points.append(Vector2(rng.randf_range(46.0, 78.0), rng.randf_range(-170.0, 170.0)))
 	var failed := 0
+	var checked_zoom := false
 	for p in points:
 		north_map.drop_latlon(p.x, p.y)
 		_teleport_pin()
+		var wait := Time.get_ticks_msec()
+		while _pin_pending and Time.get_ticks_msec() - wait < 22000:
+			await get_tree().process_frame
 		var h := terrain.sample(active.global_position.x, active.global_position.z)
 		var finite := not is_nan(h) and not is_inf(h)
 		var near := absf(active.global_position.x) < 8000.0 and absf(active.global_position.z) < 8000.0
 		var sane := h > -11000.0 and h < 9000.0
-		var grounded := absf(active.global_position.y - h) < 8.0
+		var grounded := absf(active.global_position.y - h) < 30.0
+		var id := str(terrain.spec.get("id", ""))
 		if not finite or not near or not sane or not grounded or terrain.field == null:
 			failed += 1
-			print("teleport FAIL ", p, " h ", h, " at ", active.global_position, " id ", terrain.spec.get("id"))
+			print("teleport FAIL ", p, " h ", h, " at ", active.global_position, " id ", id)
 		else:
-			print("teleport ok ", p, " h ", snapped(h, 0.1), " ", terrain.spec.get("id"))
+			print("teleport ok ", p, " h ", snapped(h, 0.1), " ", id, " z ", terrain.quad.finest_zoom(active.global_position.x, active.global_position.z) if terrain.quad else -1)
+		if not checked_zoom and id.begins_with("stream") and terrain.quad:
+			var zoom_wait := Time.get_ticks_msec()
+			while terrain.quad.finest_zoom(active.global_position.x, active.global_position.z) < 11 and Time.get_ticks_msec() - zoom_wait < 40000:
+				await get_tree().process_frame
+			var zoom := terrain.quad.finest_zoom(active.global_position.x, active.global_position.z)
+			if zoom < 11:
+				failed += 1
+				print("teleport FAIL zoom ", zoom)
+			else:
+				print("teleport zoom ", zoom)
+			var h0 := terrain.sample(active.global_position.x, active.global_position.z)
+			var shift := Vector3(5200.0, 0.0, -1800.0)
+			terrain.quad.debug_shift(shift)
+			active.global_position -= shift
+			var h1 := terrain.sample(active.global_position.x, active.global_position.z)
+			if absf(h0 - h1) > 4.0:
+				failed += 1
+				print("origin FAIL ", h0, " ", h1)
+			else:
+				print("origin ok ", snappedf(h0, 0.1))
+			terrain.quad.debug_shift(-shift)
+			active.global_position += shift
+			checked_zoom = true
+		if absf(p.x - 69.65) < 0.05 and terrain.streaming and terrain.quad:
+			var osm_wait := Time.get_ticks_msec()
+			while terrain.quad.osm_features < 1 and not terrain.quad.osm_empty and Time.get_ticks_msec() - osm_wait < 20000:
+				await get_tree().process_frame
+			if terrain.quad.osm_features < 1 and not terrain.quad.osm_empty:
+				failed += 1
+				print("osm FAIL")
+			else:
+				print("osm ", terrain.quad.osm_features, " empty ", terrain.quad.osm_empty)
 	print("teleport-test ", points.size(), " failed ", failed)
 	get_tree().quit(0 if failed == 0 else 1)
 
@@ -1167,6 +1380,13 @@ func _run_fly_test() -> void:
 	for p in points:
 		north_map.drop_latlon(p.x, p.y)
 		_teleport_pin()
+		var wait := Time.get_ticks_msec()
+		while _pin_pending and Time.get_ticks_msec() - wait < 22000:
+			await get_tree().process_frame
+		if _pin_pending:
+			failed += 1
+			print("fly FAIL still loading ", p)
+			continue
 		var elapsed := 0.0
 		while elapsed < 30.0:
 			await get_tree().physics_frame
@@ -1224,6 +1444,109 @@ func _run_camera_test() -> void:
 				return
 	print("camera-test ok samples ", samples, " worst_px ", snappedf(worst, 0.01))
 	get_tree().quit(0)
+
+
+func _run_osm_probe() -> void:
+	north_map.drop_latlon(69.65, 18.96)
+	_teleport_pin()
+	var wait := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - wait < 20000:
+		await get_tree().process_frame
+	var features := 0
+	var empty := true
+	if terrain.quad != null:
+		features = terrain.quad.osm_features
+		empty = terrain.quad.osm_empty
+	print("osm-probe features ", features, " empty ", empty)
+	get_tree().quit(0)
+
+
+func _run_stream_smoke() -> void:
+	north_map.drop_latlon(78.2, 16.0)
+	_teleport_pin()
+	var wait := Time.get_ticks_msec()
+	while _pin_pending and Time.get_ticks_msec() - wait < 25000:
+		await get_tree().process_frame
+	var sh := terrain.sample(active.global_position.x, active.global_position.z)
+	print("stream ", terrain.spec.get("id"), " h ", sh, " flying ", vehicle.flying)
+	get_tree().quit(0 if str(terrain.spec.get("id")).begins_with("stream-") and not is_nan(sh) else 1)
+
+
+func _run_yard_test() -> void:
+	_activate("yard")
+	var sx := float(terrain.spec["spawn"][0])
+	var sz := float(terrain.spec["spawn"][1])
+	_place(yard, sx, sz, 0.0)
+	yard.freeze = false
+	var fwd := yard.forward()
+	var tree_at := yard.global_position + fwd * 3.4
+	var th := terrain.sample(tree_at.x, tree_at.z)
+	var rec: Dictionary = foliage.plant_sapling(tree_at.x, th, tree_at.z, 0.055)
+	yard.tool = 2
+	yard.set_manipulate(true)
+	yard_drive = 1.0
+	var elapsed := 0.0
+	while elapsed < 8.0 and bool(rec.get("alive", false)):
+		await get_tree().physics_frame
+		elapsed += get_physics_process_delta_time()
+	var felled: bool = not bool(rec.get("alive", true)) and not foliage.felled_logs.is_empty()
+	print("yard fell ", felled, " pos ", yard.global_position, " tree ", tree_at, " logs ", foliage.felled_logs.size())
+	if not felled:
+		print("yard-test FAIL fell")
+		get_tree().quit(1)
+		return
+	var log: RigidBody3D = foliage.felled_logs[foliage.felled_logs.size() - 1]
+	yard.tool = 0
+	yard.set_manipulate(true)
+	var probe := yard.global_position + yard.forward() * 2.0
+	var before := terrain.sample(probe.x, probe.z)
+	var pushed := 0.0
+	while pushed < 6.0:
+		await get_tree().physics_frame
+		pushed += get_physics_process_delta_time()
+	var after := terrain.sample(probe.x, probe.z)
+	var cut := 0.0
+	if terrain.patch != null and terrain.patch.field != null:
+		cut = terrain.patch.field.cut_m3
+	var dug := absf(after - before) > 0.015 or cut > 0.02
+	print("yard push before ", snappedf(before, 0.01), " after ", snappedf(after, 0.01), " cut ", snappedf(cut, 0.001))
+	if not dug:
+		print("yard-test FAIL push")
+		get_tree().quit(1)
+		return
+	yard.tool = 1
+	yard.set_manipulate(true)
+	var back := 0.0
+	while is_instance_valid(log) and yard.global_position.distance_to(log.global_position) > 3.2 and back < 10.0:
+		var to_log := log.global_position - yard.global_position
+		yard_drive = 1.0 if to_log.dot(yard.forward()) >= 0.0 else -1.0
+		await get_tree().physics_frame
+		back += get_physics_process_delta_time()
+	var loaded := yard.load_log(log)
+	print("yard load ", loaded, " dist ", yard.global_position.distance_to(log.global_position) if is_instance_valid(log) else -1)
+	if not loaded:
+		print("yard-test FAIL load")
+		get_tree().quit(1)
+		return
+	var start: Vector3 = log.global_position
+	yard.tool = 0
+	yard.set_manipulate(false)
+	yard_drive = 1.0
+	var travelled := 0.0
+	var guard := 0.0
+	var prev := yard.global_position
+	while travelled < 50.0 and guard < 40.0:
+		await get_tree().physics_frame
+		var step := Vector2(yard.global_position.x - prev.x, yard.global_position.z - prev.z).length()
+		prev = yard.global_position
+		travelled += step
+		guard += get_physics_process_delta_time()
+	var carried := log.global_position.distance_to(start)
+	var parent_ok: bool = log.get_parent() == yard.trailer or yard.trailer.is_ancestor_of(log)
+	print("yard haul travelled ", snappedf(travelled, 0.1), " log ", snappedf(carried, 0.1), " parent ", parent_ok)
+	var ok := travelled >= 50.0 and carried >= 45.0 and parent_ok
+	print("yard-test ", "ok" if ok else "FAIL")
+	get_tree().quit(0 if ok else 1)
 
 
 func _run_dig_test() -> void:

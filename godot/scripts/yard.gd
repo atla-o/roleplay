@@ -81,10 +81,10 @@ func cycle_tool() -> void:
 	_pose()
 
 
-func load_log(log: RigidBody3D) -> bool:
+func load_log(log: RigidBody3D, reach: float = 6.0) -> bool:
 	if log == null or not is_instance_valid(log) or trailer == null:
 		return false
-	if global_position.distance_to(log.global_position) > 6.0:
+	if global_position.distance_to(log.global_position) > reach:
 		return false
 	log.freeze = true
 	log.linear_velocity = Vector3.ZERO

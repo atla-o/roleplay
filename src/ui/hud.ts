@@ -302,7 +302,7 @@ function markup(species: Species[]): string {
       <p>Natural Resources Canada, National Hydro Network, work unit 10VE001, flowlines and waterbodies. <a href="https://open.canada.ca/en/open-government-licence-canada">Open Government Licence – Canada</a>.</p>
       <p>Slope, closed depressions, and flow accumulation are derived from the measured DEM. Machine rates, detention, and the ninety-day window are labeled in the inspector as sim parameters.</p>
       <p>Species dots and the observed list are GBIF occurrences. <a href="https://www.gbif.org">GBIF.org</a>. Each record keeps its source dataset licence.</p>
-      <p>World imagery is Sentinel-2 cloudless by EOX, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>, modified Copernicus Sentinel data 2021, over Natural Earth II. The globe is CesiumJS, Apache-2.0. The basin viewer is Three.js, MIT.</p>
+      <p>World imagery is Sentinel-2 cloudless 2016 by EOX IT Services GmbH, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>, contains modified Copernicus Sentinel data 2016, over Natural Earth II. The globe is CesiumJS, Apache-2.0. The basin viewer is Three.js, MIT.</p>
       <p class="peers">Creation division · published at atlas.rehab.</p>
     </dialog>
   `;

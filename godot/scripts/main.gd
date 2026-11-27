@@ -560,6 +560,13 @@ func _ui() -> void:
 	north_map.set_anchors_preset(Control.PRESET_FULL_RECT)
 	north_map.pinned.connect(_on_pin)
 	map_host.add_child(north_map)
+	var credit := Label.new()
+	credit.text = "Imagery: Sentinel-2 cloudless 2016 by EOX IT Services GmbH (CC BY 4.0), contains modified Copernicus Sentinel data 2016 · Québec MRNF orthophoto (CC BY 4.0) · Elevation: NRCan HRDEM (OGL-Canada), ArcticDEM (PGC), Mapzen Terrarium · Map data © OpenStreetMap contributors, OpenMapTiles, OpenFreeMap"
+	credit.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	credit.add_theme_font_size_override("font_size", 11)
+	credit.modulate = Color(1, 1, 1, 0.6)
+	credit.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(credit)
 	var overlay := Control.new()
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1026,10 +1033,15 @@ func _run_map_test() -> void:
 	print("svalbard-pin ", europe_id, " ", active.global_position, " h ", europe_h)
 	north_map.drop_latlon(62.0, -70.0)
 	_teleport_pin()
+	# After #6, a pin off the measured squares streams live tiles (id stream-*),
+	# then falls back to the coarse north-* grid only if the stream fails.
+	var wait := Time.get_ticks_msec()
+	while _pin_pending and Time.get_ticks_msec() - wait < 25000:
+		await get_tree().process_frame
 	var far_id := str(terrain.spec.get("id"))
 	var far_h := terrain.sample(active.global_position.x, active.global_position.z)
 	print("lowres-pin ", far_id, " ", active.global_position, " h ", far_h)
-	var ok := places_ok and island_id == "rene-levasseur" and europe_id == "northern-2" and far_id.begins_with("north-") and island_h > 300.0 and far_h > 1.5 and absf(active.global_position.x) < 5000.0
+	var ok := places_ok and island_id == "rene-levasseur" and europe_id == "northern-2" and far_id.begins_with("stream-") and island_h > 300.0 and far_h > 1.5 and absf(active.global_position.x) < 5000.0
 	print("map-test ", "ok" if ok else "FAIL")
 	get_tree().quit(0 if ok else 1)
 

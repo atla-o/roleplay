@@ -22,7 +22,7 @@ Slope, closed-depression depth, and D8 flow accumulation are derived from the me
 
 ## World imagery
 
-Sentinel-2 cloudless by [EOX IT Services GmbH](https://s2maps.eu) (CC BY 4.0), containing modified Copernicus Sentinel data 2021. The fallback mosaic is Natural Earth II, shipped with CesiumJS and in the public domain.
+Sentinel-2 cloudless 2016 by [EOX IT Services GmbH](https://cloudless.eox.at) (CC BY 4.0), containing modified Copernicus Sentinel data 2016. Only the 2016 vintage is CC BY 4.0; the 2018 and later mosaics are CC BY-NC-SA 4.0 and are not used. The fallback mosaic is Natural Earth II, shipped with CesiumJS and in the public domain.
 
 ## Île René-Levasseur
 
@@ -48,7 +48,7 @@ The playable build in `godot/` is [Godot Engine](https://godotengine.org/) 4.7 (
 
 The playable world starts on Île René-Levasseur. The 2 m tile is the NRCan HRDEM mosaic, and an 80 m ring continues that ground out to the reservoir. Cells the ring marks as water sit under the water surface, so the shoreline is the reservoir rather than the edge of the square. Digs on a site are written to a private local file and loaded again on the next visit.
 
-The map and any teleport outside those measured tiles use one coarse polar-stereographic grid of the land from 45°N to the pole. Elevation is Mapzen Terrarium at Web Mercator zoom 4. Color is Sentinel-2 cloudless from EOX, the same imagery family as the measured tiles. The pole beyond the Mercator cutoff is drawn as ocean.
+The map and any teleport outside those measured tiles use one coarse polar-stereographic grid of the land from 45°N to the pole. Elevation is Mapzen Terrarium at Web Mercator zoom 4. Color is Sentinel-2 cloudless 2016 from EOX (CC BY 4.0), the same layer the streamed north uses. The pole beyond the Mercator cutoff is drawn as ocean.
 
 The other three 2 m tiles stay reachable from Settings. The outer few hundred metres of those squares are lowered toward the water along a wandering line so the horizon is a shore. That fringe is not a second survey. The interior posts are the measured DEM.
 
@@ -58,7 +58,7 @@ Northern 2 — Europe is ArcticDEM v4.1 at 2 m on the west coast of Svalbard, a 
 
 Northern 3 — Russia is ArcticDEM v4.1 at 2 m on the west coast of Yamal, a 4 km window in EPSG:32642 centred near 70.493°N, 67.913°E (mosaic tile `49_60_1_2_2m_v4.1`). The machine starts on the tundra above the sea.
 
-Color on the three tiles is Sentinel-2 cloudless from EOX (CC BY 4.0), containing modified Copernicus Sentinel data. Canada uses the 2021 file. Europe and Russia use the 2021 tiles, with the 2020 file as a fallback if a tile is missing.
+Color on the three tiles is Sentinel-2 cloudless 2016 from EOX IT Services GmbH (CC BY 4.0), containing modified Copernicus Sentinel data 2016, rebaked with `tools/bake/recolor.py` from the zoom 15 tiles over each square's exact bounds.
 
 An apron around each square eases from the measured edge posts toward one sample of the Mapzen/Tilezen terrarium DEM (zoom 5): 144 m at the basin and 348 m at the island. That apron is not a second elevation survey. A repeating shading grain, generated here, is a few centimetres of normal perturbation. It does not move the posts.
 

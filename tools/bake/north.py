@@ -26,7 +26,7 @@ LAT_LIMIT = 45.0
 POSTS = 640
 ZOOM = 4
 TERRARIUM = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
-EOX = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"
+EOX = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"
 UA = {"User-Agent": "roleplay-north-bake/1.0"}
 
 

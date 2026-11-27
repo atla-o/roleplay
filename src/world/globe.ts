@@ -8,7 +8,7 @@ import {
 import { PLAYABLE, RING_MARK, RING_TILE, TILES, type WorldTile } from './tiles';
 
 const EOX =
-  'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/g/{z}/{y}/{x}.jpg';
+  'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/{z}/{y}/{x}.jpg';
 
 export interface Occurrence {
   region: string;
@@ -79,7 +79,7 @@ export class WorldGlobe {
       url: EOX,
       tilingScheme: new Cesium.WebMercatorTilingScheme(),
       maximumLevel: 13,
-      credit: 'Sentinel-2 cloudless by EOX (CC BY 4.0), modified Copernicus Sentinel data 2021',
+      credit: 'Sentinel-2 cloudless 2016 by EOX IT Services GmbH (CC BY 4.0), contains modified Copernicus Sentinel data 2016',
     });
     this.viewer.imageryLayers.addImageryProvider(satellite);
   }

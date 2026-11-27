@@ -3,11 +3,11 @@ extends RefCounted
 
 ## Web-mercator tiles for the north, in the same z/x/y layout FableFlight uses.
 ## Elevation is Mapzen Terrarium on the public AWS bucket. Imagery is EOX
-## Sentinel-2 cloudless. Both are cached under user://stream with a file cap.
+## Sentinel-2 cloudless 2016 (CC BY 4.0, commercial use allowed with credit). Both are cached under user://stream with a file cap.
 
 const CACHE_CAP := 240
 const ELEV := "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/%d/%d/%d.png"
-const IMG := "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/GoogleMapsCompatible/%d/%d/%d.jpg"
+const IMG := "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/GoogleMapsCompatible/%d/%d/%d.jpg"
 
 
 static func tile_of(lat: float, lon: float, zoom: int) -> Vector2i:

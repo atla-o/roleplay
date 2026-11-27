@@ -26,8 +26,9 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "godot" / "data"
 STAC = "https://stac.pgc.umn.edu/api/v1/search"
 COLLECTION = "arcticdem-mosaics-v4.1-2m"
-EOX = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2021_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"
-EOX_FALLBACK = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"
+EOX = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg"
+# 2016 is the only CC BY 4.0 vintage; 2018+ are CC BY-NC-SA. No other-year fallback.
+EOX_FALLBACK = EOX
 
 os.environ.setdefault("AWS_NO_SIGN_REQUEST", "YES")
 os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")

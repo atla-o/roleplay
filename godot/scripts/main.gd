@@ -560,6 +560,13 @@ func _ui() -> void:
 	north_map.set_anchors_preset(Control.PRESET_FULL_RECT)
 	north_map.pinned.connect(_on_pin)
 	map_host.add_child(north_map)
+	var credit := Label.new()
+	credit.text = "Imagery: Sentinel-2 cloudless 2016 by EOX IT Services GmbH (CC BY 4.0), contains modified Copernicus Sentinel data 2016 · Québec MRNF orthophoto (CC BY 4.0) · Elevation: NRCan HRDEM (OGL-Canada), ArcticDEM (PGC), Mapzen Terrarium · Map data © OpenStreetMap contributors, OpenMapTiles, OpenFreeMap"
+	credit.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	credit.add_theme_font_size_override("font_size", 11)
+	credit.modulate = Color(1, 1, 1, 0.6)
+	credit.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(credit)
 	var overlay := Control.new()
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE

@@ -4,7 +4,9 @@ extends RigidBody3D
 var terrain: TerrainWorld
 var throttle := 0.0
 var steer := 0.0
-var blade_angle := 0.28
+var blade_angle := 0.4
+var manipulate := false
+var flying := false
 var blade_tilt := 0.0
 var tilt_node: Node3D
 var blade_node: Node3D
@@ -54,6 +56,9 @@ func _physics_process(dt: float) -> void:
 		_pose_blade()
 		return
 	dt = minf(dt, 0.05)
+	if flying:
+		_fly(dt)
+		return
 	var space := get_world_3d().direct_space_state
 	var xf := global_transform
 	var hits := 0
@@ -104,6 +109,11 @@ func _physics_process(dt: float) -> void:
 		linear_velocity -= fwd * (speed - signf(speed) * 4.2) * 0.35
 	_pose_blade()
 	_scroll_tracks(speed, dt)
+	if not manipulate:
+		if dust:
+			dust.emitting = false
+		_hold_shore()
+		return
 	if absf(speed) > 0.3:
 		track_travel += absf(speed) * dt
 		if track_travel > 0.2:
@@ -122,6 +132,30 @@ func _physics_process(dt: float) -> void:
 	elif dust:
 		dust.emitting = false
 	_hold_shore()
+
+
+func _fly(dt: float) -> void:
+	var wish := global_transform.basis * Vector3(steer, 0.0, throttle)
+	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_E):
+		wish.y += 1.0
+	if Input.is_key_pressed(KEY_Q) or Input.is_key_pressed(KEY_CTRL):
+		wish.y -= 1.0
+	var speed := 55.0
+	linear_velocity = linear_velocity.lerp(wish.normalized() * speed * maxf(wish.length(), 0.0), 1.0 - exp(-dt * 2.2))
+	if wish.length() < 0.05:
+		linear_velocity = linear_velocity.lerp(Vector3.ZERO, 1.0 - exp(-dt * 1.4))
+	var ground := terrain.sample(global_position.x, global_position.z)
+	if global_position.y < ground + 2.0:
+		var t := global_transform
+		t.origin.y = ground + 2.0
+		global_transform = t
+		linear_velocity.y = maxf(linear_velocity.y, 0.0)
+
+
+func set_manipulate(on: bool) -> void:
+	manipulate = on
+	blade_angle = -0.5 if on else 0.4
+	_pose_blade()
 
 
 func _hold_shore() -> void:
@@ -151,16 +185,17 @@ func _hold_shore() -> void:
 
 
 func _pose_blade() -> void:
+	# Negative blade_angle is down. Pitch the pivot so the cutting edge drops.
+	if blade_node:
+		blade_node.rotation.x = -blade_angle
+	if tilt_node:
+		tilt_node.rotation.z = blade_tilt
 	if blade_anim == null or not blade_anim.has_animation("blade-close"):
 		return
-	# The end of blade-close is the model's rest key, which stands the side
-	# wings up as slabs. Stay on the pitched moldboard key.
 	if blade_anim.current_animation != "blade-close":
 		blade_anim.play("blade-close")
 	blade_anim.seek(0.0, true)
 	blade_anim.pause()
-	if tilt_node:
-		tilt_node.rotation.z = blade_tilt
 
 
 func _scroll_tracks(speed: float, dt: float) -> void:
@@ -170,26 +205,15 @@ func _scroll_tracks(speed: float, dt: float) -> void:
 
 
 func _load_model() -> void:
-	model = (load("res://assets/models/bulldozer.glb") as PackedScene).instantiate()
+	model = (load("res://assets/models/dozer.glb") as PackedScene).instantiate()
 	add_child(model)
-	blade_anim = _find_player(model)
+	blade_node = model.find_child("blade", true, false) as Node3D
 	tilt_node = model.find_child("blade-angle", true, false) as Node3D
-	blade_node = tilt_node.get_parent() as Node3D if tilt_node else null
-	# The charcoal frame shares the pitch pivot and slides out as a grey plate
-	# once the blade is in the cut. The yellow moldboard is the blade.
-	if blade_node and tilt_node:
-		var drop: Array = []
-		for child in blade_node.get_children():
-			if child != tilt_node:
-				drop.append(child)
-		for child in drop:
-			blade_node.remove_child(child)
-			child.free()
-		_paint_blade(tilt_node)
+	_finish_materials(model)
 	_collect_tracks(model)
-	_glass(model)
 	_seat_on_ground(model)
-	print("tracks ", track_mats.size(), " tilt ", tilt_node != null)
+	_pose_blade()
+	print("tracks ", track_mats.size(), " blade ", blade_node != null, " tilt ", tilt_node != null)
 
 
 func _build_dozer() -> void:
@@ -359,6 +383,54 @@ func _collect_tracks(node: Node) -> void:
 				track_mats.append(mat)
 	for child in node.get_children():
 		_collect_tracks(child)
+
+
+func _finish_materials(node: Node) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		var key := str(mi.name).to_lower()
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.66, 0.68, 0.64)
+		mat.metallic = 0.12
+		mat.roughness = 0.48
+		if "mold" in key:
+			mat.albedo_color = Color(0.78, 0.76, 0.68)
+			mat.metallic = 0.22
+			mat.roughness = 0.46
+			mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		elif "edge" in key or "cutting" in key:
+			mat.albedo_color = Color(0.86, 0.68, 0.38)
+			mat.metallic = 0.12
+			mat.roughness = 0.7
+			mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		elif "shoe" in key or "rubber" in key:
+			mat.albedo_color = Color(0.08, 0.08, 0.085)
+			mat.metallic = 0.02
+			mat.roughness = 0.9
+		elif "wheel" in key or "steel" in key:
+			mat.albedo_color = Color(0.55, 0.56, 0.54)
+			mat.metallic = 0.32
+			mat.roughness = 0.38
+		elif "dark" in key or "frame" in key:
+			mat.albedo_color = Color(0.18, 0.19, 0.2)
+			mat.metallic = 0.16
+			mat.roughness = 0.55
+		elif "glass" in key or "cab" in key:
+			mat.albedo_color = Color(0.34, 0.5, 0.54)
+			mat.metallic = 0.06
+			mat.roughness = 0.08
+		elif "sensor" in key:
+			mat.albedo_color = Color(0.14, 0.15, 0.16)
+			mat.metallic = 0.24
+			mat.roughness = 0.3
+		elif "lamp" in key:
+			mat.albedo_color = Color(0.95, 0.55, 0.12)
+			mat.emission_enabled = true
+			mat.emission = Color(0.9, 0.35, 0.05)
+			mat.emission_energy_multiplier = 1.4
+		mi.material_override = mat
+	for child in node.get_children():
+		_finish_materials(child)
 
 
 func _paint_blade(node: Node) -> void:

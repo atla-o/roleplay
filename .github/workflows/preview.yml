@@ -203,6 +203,18 @@ jobs:
       - name: Dig test
         run: timeout 240 /opt/godot/godot --headless --path godot -- --dig-test
 
+      - name: Camera test
+        run: timeout 240 /opt/godot/godot --headless --path godot -- --camera-test
+
+      - name: Teleport test
+        run: timeout 700 /opt/godot/godot --headless --path godot -- --teleport-test
+
+      - name: Fly test
+        run: timeout 700 /opt/godot/godot --headless --path godot -- --fly-test
+
+      - name: Yard test
+        run: timeout 240 /opt/godot/godot --headless --path godot -- --yard-test
+
       - name: Export web preview
         run: |
           set -euo pipefail

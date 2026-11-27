@@ -1,8 +1,39 @@
 {
   "sites": [
     {
-      "id": "northern-1",
-      "name": "Northern 1 — Canada",
+      "id": "rene-levasseur",
+      "name": "Île René-Levasseur",
+      "heights": "ile.u16",
+      "color": "ile_color.jpg",
+      "cols": 2000,
+      "rows": 2000,
+      "spacing": 2.0,
+      "hmin": 348.2874755859375,
+      "hmax": 616.302490234375,
+      "repose": 32.0,
+      "spawn": [2268.0, 3060.0],
+      "yaw": 0.0,
+      "ring": {
+        "heights": "ile_ring.u16",
+        "mask": "ile_ring_mask.u8",
+        "cols": 953,
+        "rows": 1047,
+        "spacing": 80.0,
+        "origin": [-9360.0, -46160.0],
+        "hmin": 347.02154541015625,
+        "hmax": 1019.7111206054688
+      },
+      "water": 348.59,
+      "outer_m": 0.0,
+      "forest": true,
+      "lat": 51.4332,
+      "lon": -69.0892,
+      "bounds": {"west": -69.25, "south": 51.0, "east": -68.15, "north": 51.75},
+      "frame": {"kind": "utm", "zone": 19, "east0": 491800.0, "north0": 5696000.0}
+    },
+    {
+      "id": "polar-desert-basin",
+      "name": "Polar Desert Basin",
       "heights": "basin.u16",
       "color": "basin_color.jpg",
       "cols": 2000,
@@ -17,7 +48,9 @@
       "outer_m": 144.0,
       "forest": false,
       "lat": 75.3971,
-      "lon": -89.5091
+      "lon": -89.5091,
+      "bounds": {"west": -89.62, "south": 75.36, "east": -89.4, "north": 75.44},
+      "frame": {"kind": "local", "lat": 75.3971, "lon": -89.5091, "cx": 1999.0, "cz": 1999.0}
     },
     {
       "id": "northern-2",
@@ -36,7 +69,9 @@
       "outer_m": 34.0,
       "forest": false,
       "lat": 78.04862,
-      "lon": 13.6441
+      "lon": 13.6441,
+      "bounds": {"west": 13.52, "south": 78.02, "east": 13.77, "north": 78.08},
+      "frame": {"kind": "local", "lat": 78.04862, "lon": 13.6441, "cx": 1999.0, "cz": 1999.0}
     },
     {
       "id": "northern-3",
@@ -55,7 +90,9 @@
       "outer_m": 0.0,
       "forest": false,
       "lat": 70.49304,
-      "lon": 67.91264
+      "lon": 67.91264,
+      "bounds": {"west": 67.82, "south": 70.46, "east": 68.01, "north": 70.53},
+      "frame": {"kind": "local", "lat": 70.49304, "lon": 67.91264, "cx": 1999.0, "cz": 1999.0}
     }
   ]
 }

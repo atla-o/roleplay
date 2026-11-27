@@ -1033,10 +1033,15 @@ func _run_map_test() -> void:
 	print("svalbard-pin ", europe_id, " ", active.global_position, " h ", europe_h)
 	north_map.drop_latlon(62.0, -70.0)
 	_teleport_pin()
+	# After #6, a pin off the measured squares streams live tiles (id stream-*),
+	# then falls back to the coarse north-* grid only if the stream fails.
+	var wait := Time.get_ticks_msec()
+	while _pin_pending and Time.get_ticks_msec() - wait < 25000:
+		await get_tree().process_frame
 	var far_id := str(terrain.spec.get("id"))
 	var far_h := terrain.sample(active.global_position.x, active.global_position.z)
 	print("lowres-pin ", far_id, " ", active.global_position, " h ", far_h)
-	var ok := places_ok and island_id == "rene-levasseur" and europe_id == "northern-2" and far_id.begins_with("north-") and island_h > 300.0 and far_h > 1.5 and absf(active.global_position.x) < 5000.0
+	var ok := places_ok and island_id == "rene-levasseur" and europe_id == "northern-2" and far_id.begins_with("stream-") and island_h > 300.0 and far_h > 1.5 and absf(active.global_position.x) < 5000.0
 	print("map-test ", "ok" if ok else "FAIL")
 	get_tree().quit(0 if ok else 1)
 
